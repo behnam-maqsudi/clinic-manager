@@ -115,9 +115,9 @@ async function createWindow() {
         electron_1.shell.openExternal(url);
         return { action: 'deny' };
     });
-    mainWindow.webContents.on('did-fail-load', async () => {
-        // If remote server is unreachable, fall back to local server so user isn't stuck
-        if (readRemoteUrl()) {
+    mainWindow.webContents.on('did-fail-load', async (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
+        // If remote server is unreachable on main frame, fall back to local server so user isn't stuck
+        if (isMainFrame && readRemoteUrl()) {
             const port = await ensureLocalServer();
             mainWindow?.loadURL(`http://localhost:${port}`);
         }

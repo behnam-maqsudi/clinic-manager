@@ -1,7 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { Attachment, Patient, PatientInput, PatientStatus, ReturningMatch, UserRole } from './shared/types';
+import type {
+  Attachment,
+  ClinicMessage,
+  ClinicSetupState,
+  MessageKind,
+  MessageRecipientRole,
+  MessageSenderRole,
+  Patient,
+  PatientInput,
+  PatientStatus,
+  ReturningMatch,
+  UserRole,
+} from './shared/types';
 
 const DATA_DIR = process.env.CLINIC_DATA_DIR
   ? path.resolve(process.env.CLINIC_DATA_DIR)
@@ -51,6 +64,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_patients_visit_date ON patients(visit_date);
   CREATE INDEX IF NOT EXISTS idx_patients_status ON patients(status);
   CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
+
+  CREATE TABLE IF NOT EXISTS clinic_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_role TEXT NOT NULL CHECK (sender_role IN ('secretary', 'doctor', 'system')),
+    recipient_role TEXT NOT NULL DEFAULT 'all' CHECK (recipient_role IN ('secretary', 'doctor', 'all')),
+    body TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'connection_invite')),
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    read_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_clinic_messages_created_at ON clinic_messages(created_at);
+
+  CREATE TABLE IF NOT EXISTS clinic_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 const columns = db.prepare('PRAGMA table_info(patients)').all() as Array<{ name: string }>;
@@ -359,4 +390,134 @@ export function createBackup(): string {
 export function getDbPath(): string {
   db.exec('PRAGMA wal_checkpoint(PASSIVE);');
   return DB_PATH;
+}
+
+interface RawMessageRow {
+  id: number;
+  sender_role: MessageSenderRole;
+  recipient_role: MessageRecipientRole;
+  body: string;
+  kind: MessageKind;
+  meta_json: string;
+  read_at: string;
+  created_at: string;
+}
+
+function hydrateMessage(row: RawMessageRow): ClinicMessage {
+  let meta: ClinicMessage['meta'] = {};
+  try {
+    meta = JSON.parse(row.meta_json || '{}');
+  } catch {
+    meta = {};
+  }
+  return {
+    id: row.id,
+    sender_role: row.sender_role,
+    recipient_role: row.recipient_role,
+    body: row.body,
+    kind: row.kind,
+    meta,
+    read_at: row.read_at,
+    created_at: row.created_at,
+  };
+}
+
+export function listMessages(limit = 60): ClinicMessage[] {
+  const safeLimit = Math.max(1, Math.min(200, Number(limit) || 60));
+  const rows = db
+    .prepare('SELECT * FROM clinic_messages ORDER BY id DESC LIMIT ?')
+    .all(safeLimit) as unknown as RawMessageRow[];
+  return rows.reverse().map(hydrateMessage);
+}
+
+export function createMessage(input: {
+  sender_role: MessageSenderRole;
+  recipient_role?: MessageRecipientRole;
+  body: string;
+  kind?: MessageKind;
+  meta?: ClinicMessage['meta'];
+}): ClinicMessage {
+  const body = String(input.body || '').trim();
+  if (!body) {
+    throw new Error('متن پیام نمی‌تواند خالی باشد.');
+  }
+  const senderRole: MessageSenderRole =
+    input.sender_role === 'doctor' || input.sender_role === 'system' ? input.sender_role : 'secretary';
+  const recipientRole: MessageRecipientRole =
+    input.recipient_role === 'doctor' || input.recipient_role === 'secretary' ? input.recipient_role : 'all';
+  const kind: MessageKind = input.kind === 'connection_invite' ? 'connection_invite' : 'chat';
+  const metaJson = JSON.stringify(input.meta || {});
+  const now = new Date().toISOString();
+
+  const res = db
+    .prepare(
+      `INSERT INTO clinic_messages (sender_role, recipient_role, body, kind, meta_json, read_at, created_at)
+       VALUES (?, ?, ?, ?, ?, '', ?)`
+    )
+    .run(senderRole, recipientRole, body, kind, metaJson, now);
+
+  const created = db
+    .prepare('SELECT * FROM clinic_messages WHERE id = ?')
+    .get(Number(res.lastInsertRowid)) as unknown as RawMessageRow;
+  return hydrateMessage(created);
+}
+
+export function markMessagesRead(role: UserRole): number {
+  const now = new Date().toISOString();
+  const res = db
+    .prepare(
+      `UPDATE clinic_messages
+       SET read_at = ?
+       WHERE read_at = '' AND (recipient_role = ? OR recipient_role = 'all') AND sender_role != ?`
+    )
+    .run(now, role, role);
+  return Number(res.changes || 0);
+}
+
+function getSetting(key: string): string {
+  const row = db.prepare('SELECT value FROM clinic_settings WHERE key = ?').get(key) as { value?: string } | undefined;
+  return row?.value || '';
+}
+
+function setSetting(key: string, value: string): void {
+  db.prepare(
+    'INSERT INTO clinic_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  ).run(key, value);
+}
+
+function hashPin(pin: string, salt?: string): string {
+  const useSalt = salt || crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(pin, useSalt, 32).toString('hex');
+  return `${useSalt}:${derived}`;
+}
+
+export function getSetupState(): ClinicSetupState {
+  const setupCompleted = getSetting('setup_completed') === 'true';
+  const rawRole = getSetting('primary_role');
+  const primaryRole: UserRole | null = rawRole === 'doctor' || rawRole === 'secretary' ? rawRole : null;
+  const hasDoctorPin = Boolean(getSetting('doctor_pin_hash'));
+  return { setupCompleted, primaryRole, hasDoctorPin };
+}
+
+export function completeSetup(input: { primaryRole: UserRole; doctorPin: string }): ClinicSetupState {
+  const pin = String(input.doctorPin || '').trim();
+  if (pin.length < 4) {
+    throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
+  }
+  const role: UserRole = input.primaryRole === 'secretary' ? 'secretary' : 'doctor';
+  setSetting('primary_role', role);
+  setSetting('doctor_pin_hash', hashPin(pin));
+  setSetting('setup_completed', 'true');
+  return getSetupState();
+}
+
+export function verifyDoctorPin(pin: string): boolean {
+  const stored = getSetting('doctor_pin_hash');
+  if (!stored) return false;
+  const [salt, expectedHex] = stored.split(':');
+  if (!salt || !expectedHex) return false;
+  const actualHex = crypto.scryptSync(String(pin || '').trim(), salt, 32).toString('hex');
+  const a = Buffer.from(expectedHex, 'hex');
+  const b = Buffer.from(actualHex, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }

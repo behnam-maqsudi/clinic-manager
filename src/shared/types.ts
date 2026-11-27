@@ -69,8 +69,43 @@ export interface GitUpdateStatus {
 export interface HealthInfo {
   ok: boolean;
   clinic: string;
+  hostname?: string;
   port: number;
   lanIps: string[];
   urls: string[];
   localUrl: string;
+}
+
+export type MessageKind = 'chat' | 'connection_invite';
+export type MessageSenderRole = UserRole | 'system';
+export type MessageRecipientRole = UserRole | 'all';
+
+export interface ClinicMessage {
+  id: number;
+  sender_role: MessageSenderRole;
+  recipient_role: MessageRecipientRole;
+  body: string;
+  kind: MessageKind;
+  meta: {
+    fromName?: string;
+    fromUrl?: string;
+    [key: string]: unknown;
+  };
+  read_at: string;
+  created_at: string;
+}
+
+export interface DiscoveredPeer {
+  ip: string;
+  url: string;
+  clinic: string;
+  hostname: string;
+  port: number;
+  isSelf: boolean;
+}
+
+export interface ClinicSetupState {
+  setupCompleted: boolean;
+  primaryRole: UserRole | null;
+  hasDoctorPin: boolean;
 }

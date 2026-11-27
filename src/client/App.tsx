@@ -6,6 +6,7 @@ import gregorian from 'react-date-object/calendars/gregorian';
 import gregorian_en from 'react-date-object/locales/gregorian_en';
 import type {
   Attachment,
+  ClinicMessage,
   GitUpdateStatus,
   Patient,
   PatientInput,
@@ -13,6 +14,8 @@ import type {
   ReturningMatch,
   UserRole,
 } from '../shared/types';
+import { MessagesModal } from './components/MessagesModal';
+import { NetworkConnectSection } from './components/NetworkConnectSection';
 import {
   BellRing,
   Calendar,
@@ -29,6 +32,7 @@ import {
   GitBranch,
   Hourglass,
   ListPlus,
+  MessageSquare,
   Palette,
   Paperclip,
   Pencil,
@@ -146,10 +150,14 @@ export default function App() {
   const [dateFilter, setDateFilter] = useState<'today' | 'all' | 'custom'>('today');
   const [customRange, setCustomRange] = useState<DateObject[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | PatientStatus>('all');
-  const [sseConnected, setSseConnected] = useState(true);
+  const [sseConnected, setSseConnected] = useState(false);
 
   const [toast, setToast] = useState('');
   const [callBanner, setCallBanner] = useState('');
+  const [inviteBanner, setInviteBanner] = useState<{ fromName: string; fromUrl: string; message: string } | null>(null);
+
+  const [messages, setMessages] = useState<ClinicMessage[]>([]);
+  const [messagesModalOpen, setMessagesModalOpen] = useState(false);
 
   // Modals
   const [patientModalOpen, setPatientModalOpen] = useState(false);
@@ -225,6 +233,10 @@ export default function App() {
   const detailCloseBtnRef = useRef<HTMLButtonElement | null>(null);
   const roleRef = useRef<UserRole>(role);
   roleRef.current = role;
+  const messagesModalOpenRef = useRef(messagesModalOpen);
+  messagesModalOpenRef.current = messagesModalOpen;
+  const lookupTimerRef = useRef<number | undefined>(undefined);
+  const lookupSeqRef = useRef(0);
   const toastTimerRef = useRef<number | undefined>(undefined);
   const callTimerRef = useRef<number | undefined>(undefined);
 
@@ -295,8 +307,84 @@ export default function App() {
     }
   }
 
+  async function fetchMessages() {
+    try {
+      const res = await fetch('/api/messages');
+      const data = await res.json();
+      if (data.ok) {
+        setMessages(data.messages || []);
+      }
+    } catch {}
+  }
+
+  async function markMessagesAsRead(targetRole: UserRole) {
+    try {
+      await fetch('/api/messages/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: targetRole }),
+      });
+      const now = new Date().toISOString();
+      setMessages((prev) =>
+        prev.map((m) =>
+          !m.read_at && m.sender_role !== targetRole && (m.recipient_role === targetRole || m.recipient_role === 'all')
+            ? { ...m, read_at: now }
+            : m
+        )
+      );
+    } catch {}
+  }
+
+  async function openMessagesModal() {
+    setMessagesModalOpen(true);
+    await markMessagesAsRead(role);
+  }
+
+  async function sendChatMessage(body: string): Promise<boolean> {
+    try {
+      const recipientRole: UserRole = role === 'doctor' ? 'secretary' : 'doctor';
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender_role: role,
+          recipient_role: recipientRole,
+          body,
+          kind: 'chat',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        notify(data.message || 'خطا در ارسال پیام');
+        return false;
+      }
+      if (data.message) {
+        setMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
+      }
+      return true;
+    } catch {
+      notify('خطا در ارتباط با سرور هنگام ارسال پیام');
+      return false;
+    }
+  }
+
+  function connectToRemoteUrl(rawUrl: string) {
+    const raw = rawUrl.trim();
+    if (!raw) return;
+    const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    if (window.clinicDesktop?.isElectron) {
+      window.clinicDesktop.setRemoteUrl(normalized);
+    } else {
+      navigator.clipboard?.writeText(normalized).catch(() => {});
+      window.open(normalized, '_blank', 'noopener,noreferrer');
+      notify(`آدرس سرور (${normalized}) باز و کپی شد.`);
+    }
+  }
+
   const fetchPatientsRef = useRef(fetchPatients);
   fetchPatientsRef.current = fetchPatients;
+  const fetchMessagesRef = useRef(fetchMessages);
+  fetchMessagesRef.current = fetchMessages;
 
   // 1 second pause after typing before searching (instant when cleared)
   useEffect(() => {
@@ -316,8 +404,29 @@ export default function App() {
   // SSE Live Sync
   useEffect(() => {
     const evtSource = new EventSource('/api/events');
-    evtSource.addEventListener('connected', () => setSseConnected(true));
-    evtSource.addEventListener('patients_changed', () => fetchPatientsRef.current());
+    evtSource.addEventListener('connected', () => {
+      setSseConnected(true);
+      fetchPatientsRef.current();
+      fetchMessagesRef.current();
+    });
+    evtSource.addEventListener('patients_changed', () => {
+      fetchPatientsRef.current();
+      const openDetail = detailPatientRef.current;
+      if (openDetail) {
+        const sessionId = detailSessionRef.current;
+        fetch(`/api/patients/${openDetail.id}`)
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.ok && data.patient && detailSessionRef.current === sessionId) {
+              setDetailPatient(data.patient);
+              if (!detailNotesDirtyRef.current) {
+                setDetailNotes(data.patient.notes || '');
+              }
+            }
+          })
+          .catch(() => {});
+      }
+    });
     evtSource.addEventListener('attachments_changed', (e) => {
       fetchPatientsRef.current();
       try {
@@ -350,6 +459,28 @@ export default function App() {
         }
       } catch {}
     });
+    evtSource.addEventListener('new_message', (e) => {
+      try {
+        const msg = JSON.parse(e.data) as ClinicMessage;
+        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+        if (msg.sender_role !== roleRef.current && msg.kind !== 'connection_invite') {
+          if (messagesModalOpenRef.current) {
+            markMessagesAsRead(roleRef.current);
+          } else {
+            playGentleChime();
+            const senderLabel = msg.sender_role === 'doctor' ? 'دکتر' : msg.sender_role === 'secretary' ? 'منشی' : 'سیستم';
+            notify(`پیام جدید از ${senderLabel}: ${msg.body}`);
+          }
+        }
+      } catch {}
+    });
+    evtSource.addEventListener('connection_invite', (e) => {
+      try {
+        const payload = JSON.parse(e.data) as { fromName: string; fromUrl: string; message: string };
+        playGentleChime();
+        setInviteBanner(payload);
+      } catch {}
+    });
     evtSource.onerror = () => setSseConnected(false);
     return () => evtSource.close();
   }, []);
@@ -369,6 +500,12 @@ export default function App() {
       visited: patients.filter((p) => p.status === 'visited').length,
     };
   }, [patients]);
+
+  const unreadMessagesCount = useMemo(() => {
+    return messages.filter(
+      (m) => !m.read_at && m.sender_role !== role && (m.recipient_role === role || m.recipient_role === 'all')
+    ).length;
+  }, [messages, role]);
 
   // Patient Modal
   function openNewPatientModal() {
@@ -403,32 +540,54 @@ export default function App() {
     setPatientModalOpen(true);
   }
 
-  async function lookupReturning(val: string) {
+  function lookupReturning(val: string) {
+    window.clearTimeout(lookupTimerRef.current);
     if (editingPatient || !val || val.trim().length < 2) {
+      lookupSeqRef.current += 1;
       setReturningMatches([]);
       return;
     }
-    const res = await fetch(`/api/patients/lookup?q=${encodeURIComponent(val.trim())}`);
-    const data = await res.json();
-    setReturningMatches(data.matches || []);
+    const seq = ++lookupSeqRef.current;
+    lookupTimerRef.current = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/patients/lookup?q=${encodeURIComponent(val.trim())}`);
+        const data = await res.json();
+        if (seq === lookupSeqRef.current) {
+          setReturningMatches(data.matches || []);
+        }
+      } catch {
+        if (seq === lookupSeqRef.current) {
+          setReturningMatches([]);
+        }
+      }
+    }, 250);
   }
 
   async function savePatient(e: React.FormEvent) {
     e.preventDefault();
     const url = editingPatient ? `/api/patients/${editingPatient.id}` : '/api/patients';
     const method = editingPatient ? 'PUT' : 'POST';
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...formState, created_by: role }),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      setPatientModalOpen(false);
-      notify(editingPatient ? 'اطلاعات مراجعه‌کننده ویرایش شد.' : 'مراجعه‌کننده جدید ثبت شد.');
-      fetchPatients();
-    } else {
-      alert(data.message || 'خطا در ذخیره اطلاعات');
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formState,
+          created_by: role,
+          actor_role: role,
+          ...(editingPatient ? { expected_updated_at: editingPatient.updated_at } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setPatientModalOpen(false);
+        notify(editingPatient ? 'اطلاعات مراجعه‌کننده ویرایش شد.' : 'مراجعه‌کننده جدید ثبت شد.');
+        fetchPatients();
+      } else {
+        notify(data.message || 'خطا در ذخیره اطلاعات');
+      }
+    } catch {
+      notify('خطا در ارتباط با سرور هنگام ذخیره اطلاعات');
     }
   }
 
@@ -620,6 +779,16 @@ export default function App() {
   }
 
   // Settings & Network Info
+  async function refreshGitStatus() {
+    try {
+      const updRes = await fetch('/api/update/status');
+      const updData = await updRes.json();
+      setGitStatus(updData);
+    } catch {
+      notify('خطا در بررسی وضعیت بروزرسانی');
+    }
+  }
+
   async function openSettingsModal() {
     setSettingsModalOpen(true);
     setBackupMessage('');
@@ -632,11 +801,15 @@ export default function App() {
         })
         .catch(() => {});
     }
-    const [updRes, healthRes] = await Promise.all([fetch('/api/update/status'), fetch('/api/health')]);
-    const updData = await updRes.json();
-    const healthData = await healthRes.json();
-    setGitStatus(updData);
-    setLanUrls(healthData.urls?.length ? healthData.urls : [healthData.localUrl]);
+    try {
+      const [updRes, healthRes] = await Promise.all([fetch('/api/update/status'), fetch('/api/health')]);
+      const updData = await updRes.json();
+      const healthData = await healthRes.json();
+      setGitStatus(updData);
+      setLanUrls(healthData.urls?.length ? healthData.urls : [healthData.localUrl]);
+    } catch {
+      notify('خطا در دریافت اطلاعات تنظیمات');
+    }
   }
 
   async function applyGitUpdate() {
@@ -677,12 +850,17 @@ export default function App() {
   }
 
   async function clearSamplePatients() {
-    const testRows = patients.filter((p) => (p.notes || '').includes('[تست]'));
-    for (const p of testRows) {
-      await fetch(`/api/patients/${p.id}`, { method: 'DELETE' });
+    try {
+      const res = await fetch('/api/patients?date=all');
+      const data = await res.json();
+      const allPatients: Patient[] = data.patients || [];
+      const testRows = allPatients.filter((p) => (p.notes || '').includes('[تست]'));
+      await Promise.all(testRows.map((p) => fetch(`/api/patients/${p.id}`, { method: 'DELETE' })));
+      notify(`${toPersianDigits(testRows.length)} بیمار تستی پاک شد.`);
+      fetchPatients();
+    } catch {
+      notify('خطا در پاک‌سازی بیماران تستی');
     }
-    notify(`${toPersianDigits(testRows.length)} بیمار تستی پاک شد.`);
-    fetchPatients();
   }
 
   function cycleTheme() {
@@ -723,22 +901,37 @@ export default function App() {
 
           <div className="flex items-center gap-2">
             {/* Role Switcher */}
-            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="hidden sm:flex p-1 rounded-xl border text-xs">
+            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex p-1 rounded-xl border text-xs">
               <button
                 onClick={() => setRole('secretary')}
                 style={role === 'secretary' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-3 py-1.5 rounded-lg font-semibold transition-all"
+                className="px-2.5 sm:px-3 py-1.5 rounded-lg font-semibold transition-all"
               >
                 منشی
               </button>
               <button
                 onClick={() => setRole('doctor')}
                 style={role === 'doctor' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-3 py-1.5 rounded-lg font-semibold transition-all"
+                className="px-2.5 sm:px-3 py-1.5 rounded-lg font-semibold transition-all"
               >
                 پزشک
               </button>
             </div>
+
+            <button
+              onClick={openMessagesModal}
+              style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+              className="relative px-3 py-2 rounded-xl border hover:opacity-90 text-xs font-medium inline-flex items-center gap-1.5"
+              title="پیام‌های دکتر و منشی"
+            >
+              <MessageSquare className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+              <span className="hidden md:inline">پیام‌ها</span>
+              {unreadMessagesCount > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {toPersianDigits(unreadMessagesCount)}
+                </span>
+              )}
+            </button>
 
             <button onClick={() => { setBulkDate(getTodayIso()); setBulkModalOpen(true); }} style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="px-3 py-2 rounded-xl border hover:opacity-90 text-xs font-medium inline-flex items-center gap-1.5">
               <ListPlus className="w-4 h-4" style={{ color: 'var(--accent)' }} />
@@ -1049,7 +1242,12 @@ export default function App() {
 
       {/* Modal 1: Add / Edit Patient */}
       {patientModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => { if (e.key === 'Escape') setPatientModalOpen(false); }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-lg w-full shadow-2xl overflow-hidden">
             <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
               <h3 className="font-bold text-base">{editingPatient ? 'ویرایش اطلاعات مراجعه‌کننده' : 'ثبت مراجعه‌کننده جدید'}</h3>
@@ -1237,7 +1435,12 @@ export default function App() {
 
       {/* Modal 2: Lab Attachments & Mobile QR */}
       {labModalPatientId && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => { if (e.key === 'Escape') setLabModalPatientId(null); }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-4xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1349,7 +1552,12 @@ export default function App() {
 
       {/* Modal 3: Bulk Notebook Import */}
       {bulkModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => { if (e.key === 'Escape') setBulkModalOpen(false); }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-3xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
               <div>
@@ -1505,7 +1713,12 @@ export default function App() {
 
       {/* Modal 5: Settings (Themes + Dev Mode + Clinic Connection + Backup + Git Update) */}
       {settingsModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => { if (e.key === 'Escape') setSettingsModalOpen(false); }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
               <h3 className="font-bold text-base">تنظیمات، تم‌ها، بکاپ و گیت</h3>
@@ -1585,54 +1798,17 @@ export default function App() {
                 )}
               </div>
 
-              {/* Electron Client Connection (Connect this Mac/PC app to main clinic server) */}
-              {window.clinicDesktop?.isElectron && (
-                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-2xl border p-4 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Wifi className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-                      <h4 className="text-sm font-bold">اتصال این برنامه به سیستم سرور مطب</h4>
-                    </div>
-                    {activeRemoteUrl && (
-                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">متصل به سرور</span>
-                    )}
-                  </div>
-                  <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
-                    اگر این سیستم (مثلاً مک یا اتاق پزشک) باید به دیتابیس سیستم منشی وصل شود، آدرس نمایش‌داده‌شده در سیستم منشی را اینجا وارد کنید:
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <input
-                      type="text"
-                      dir="ltr"
-                      value={remoteUrlInput}
-                      onChange={(e) => setRemoteUrlInput(e.target.value)}
-                      placeholder="http://192.168.8.7:3000"
-                      style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-                      className="flex-1 min-w-[180px] rounded-xl border px-3 py-2 text-xs font-mono text-left focus:outline-none"
-                    />
-                    <button
-                      onClick={() => {
-                        const raw = remoteUrlInput.trim();
-                        if (!raw) return;
-                        const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
-                        window.clinicDesktop?.setRemoteUrl(normalized);
-                      }}
-                      style={{ backgroundColor: 'var(--accent)' }}
-                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
-                    >
-                      اتصال به سرور
-                    </button>
-                    {activeRemoteUrl && (
-                      <button
-                        onClick={() => window.clinicDesktop?.setRemoteUrl('')}
-                        className="px-3 py-2 rounded-xl border bg-white text-slate-700 text-xs font-semibold"
-                      >
-                        بازگشت به دیتابیس محلی
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
+              {/* Clinic LAN Discovery, Peer Messaging & Electron Server Connection */}
+              <NetworkConnectSection
+                role={role}
+                isElectron={Boolean(window.clinicDesktop?.isElectron)}
+                remoteUrlInput={remoteUrlInput}
+                setRemoteUrlInput={setRemoteUrlInput}
+                activeRemoteUrl={activeRemoteUrl}
+                onConnectUrl={connectToRemoteUrl}
+                onDisconnectRemote={() => window.clinicDesktop?.setRemoteUrl('')}
+                notify={notify}
+              />
 
               {/* Clinic Second PC Connection */}
               {lanUrls.length > 0 && (
@@ -1686,7 +1862,7 @@ export default function App() {
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={openSettingsModal} className="px-3.5 py-2 rounded-xl border bg-white text-slate-700 text-xs font-semibold inline-flex items-center gap-1">
+                  <button onClick={refreshGitStatus} className="px-3.5 py-2 rounded-xl border bg-white text-slate-700 text-xs font-semibold inline-flex items-center gap-1">
                     <RefreshCw className="w-3.5 h-3.5" />
                     بررسی مجدد
                   </button>
@@ -1940,6 +2116,51 @@ export default function App() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Messages Modal (Doctor <-> Secretary) */}
+      <MessagesModal
+        open={messagesModalOpen}
+        onClose={() => setMessagesModalOpen(false)}
+        role={role}
+        messages={messages}
+        onSendMessage={sendChatMessage}
+        onConnectPeer={connectToRemoteUrl}
+      />
+
+      {/* Connection Invite Banner */}
+      {inviteBanner && (
+        <div
+          style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--accent)' }}
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-5 py-3.5 rounded-2xl border-2 shadow-2xl flex flex-wrap items-center gap-3 max-w-xl"
+        >
+          <Wifi className="w-5 h-5 shrink-0" style={{ color: 'var(--accent)' }} />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-bold">درخواست اتصال از {inviteBanner.fromName}</p>
+            <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-0.5">{inviteBanner.message}</p>
+          </div>
+          {inviteBanner.fromUrl && (
+            <button
+              type="button"
+              onClick={() => {
+                connectToRemoteUrl(inviteBanner.fromUrl);
+                setInviteBanner(null);
+              }}
+              style={{ backgroundColor: 'var(--accent)' }}
+              className="px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
+            >
+              اتصال به این سیستم
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setInviteBanner(null)}
+            className="p-1 rounded-lg hover:bg-slate-500/10"
+            aria-label="بستن اعلان اتصال"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 

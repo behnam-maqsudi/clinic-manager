@@ -124,6 +124,45 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     // Close settings
     await page.locator('.fixed').getByRole('button').first().click();
 
+    // 6.5. Doctor <-> Secretary messaging + unread badge
+    await page.getByRole('button', { name: 'پیام‌ها' }).click();
+    await expect(page.getByText('پیام‌های داخلی مطب (پزشک ⇄ منشی)')).toBeVisible();
+    await page.getByRole('button', { name: 'بیمار بعدی را بفرستید' }).click();
+    await expect(page.getByText('بیمار بعدی را بفرستید').first()).toBeVisible();
+    await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
+
+    // Switch to Secretary -> should see unread badge and reply
+    await page.getByRole('button', { name: 'منشی', exact: true }).click();
+    await page.getByRole('button', { name: /پیام‌ها/ }).click();
+    await page.getByPlaceholder('پیام به پزشک بنویسید...').fill('بیمار آماده ورود است');
+    await page.getByRole('button', { name: 'ارسال', exact: true }).click();
+    await expect(page.getByText('بیمار آماده ورود است')).toBeVisible();
+    await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
+
+    // 6.6. LAN Discovery in Settings + incoming connection invite banner via SSE
+    await page.getByRole('button', { name: 'تنظیمات' }).click();
+    await page.getByRole('button', { name: 'جستجو در شبکه' }).click();
+    await expect(page.getByRole('button', { name: 'جستجو در شبکه' })).toBeVisible({ timeout: 10_000 });
+    await page.locator('.fixed').getByRole('button').first().click();
+
+    // Simulate incoming connection invite from another PC on the LAN
+    const inviteRes = await page.request.post('/api/network/invite', {
+      data: {
+        fromName: 'سیستم مک دکتر',
+        fromUrl: 'http://192.168.8.99:3000',
+        fromRole: 'doctor',
+        message: 'درخواست اتصال تست شبکه',
+      },
+    });
+    expect(inviteRes.ok()).toBe(true);
+    await expect(page.getByText('درخواست اتصال از سیستم مک دکتر')).toBeVisible();
+    await expect(page.getByText('درخواست اتصال تست شبکه', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'بستن اعلان اتصال' }).click();
+
+    // 6.7. Verify invalid patient ID on attachments returns 404/400 cleanly
+    const badAttRes = await page.request.get('/api/patients/not-a-number/attachments');
+    expect(badAttRes.status()).toBe(404);
+
     // 7. Cleanup test patients via API so DB stays clean
     const listRes = await page.request.get('/api/patients?date=all&q=تست E2E');
     const listData = await listRes.json();

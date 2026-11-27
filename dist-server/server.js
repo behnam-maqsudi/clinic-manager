@@ -103,10 +103,26 @@ function getPrimaryBaseUrl(req) {
     }
     return `http://localhost:${PORT}`;
 }
+function parsePositiveId(raw) {
+    const num = Number(raw);
+    return Number.isInteger(num) && num > 0 ? num : null;
+}
+function decodeOriginalFilename(rawName) {
+    const name = rawName || 'file';
+    if (/[^\u0000-\u00ff]/.test(name)) {
+        return name;
+    }
+    const decoded = Buffer.from(name, 'latin1').toString('utf8');
+    return decoded.includes('\uFFFD') ? name : decoded;
+}
 const storage = multer_1.default.diskStorage({
     destination(req, _file, cb) {
-        const patientId = String(Number(req.params.id));
-        const dir = node_path_1.default.join(db.UPLOADS_DIR, patientId);
+        const numId = parsePositiveId(req.params.id);
+        if (!numId) {
+            cb(new Error('شناسه مراجعه‌کننده نامعتبر است.'), '');
+            return;
+        }
+        const dir = node_path_1.default.join(db.UPLOADS_DIR, String(numId));
         node_fs_1.default.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
@@ -151,11 +167,166 @@ app.get('/api/health', (_req, res) => {
     res.json({
         ok: true,
         clinic: 'مطب دکتر بهامین جهانیان',
+        hostname: node_os_1.default.hostname(),
         port: PORT,
         lanIps,
         urls: lanIps.map((ip) => `http://${ip}:${PORT}`),
         localUrl: `http://localhost:${PORT}`,
     });
+});
+// --- LAN Peer Discovery & Connection Invites ---
+app.get('/api/network/discover', async (_req, res) => {
+    const selfIps = getLanIps();
+    const selfIpSet = new Set(selfIps);
+    const subnets = Array.from(new Set(selfIps.map((ip) => ip.split('.').slice(0, 3).join('.'))));
+    if (subnets.length === 0) {
+        return res.json({ ok: true, selfIps, peers: [] });
+    }
+    const candidateIps = [];
+    for (const subnet of subnets.slice(0, 2)) {
+        for (let host = 1; host <= 254; host += 1) {
+            candidateIps.push(`${subnet}.${host}`);
+        }
+    }
+    const peers = [];
+    const batchSize = 50;
+    for (let i = 0; i < candidateIps.length; i += batchSize) {
+        const batch = candidateIps.slice(i, i + batchSize);
+        const results = await Promise.all(batch.map(async (ip) => {
+            const url = `http://${ip}:${PORT}`;
+            try {
+                const resp = await fetch(`${url}/api/health`, {
+                    signal: AbortSignal.timeout(350),
+                });
+                if (!resp.ok)
+                    return null;
+                const data = (await resp.json());
+                if (!data?.ok || !data?.clinic)
+                    return null;
+                return {
+                    ip,
+                    url,
+                    clinic: data.clinic,
+                    hostname: data.hostname || ip,
+                    port: Number(data.port) || PORT,
+                    isSelf: selfIpSet.has(ip),
+                };
+            }
+            catch {
+                return null;
+            }
+        }));
+        for (const item of results) {
+            if (item)
+                peers.push(item);
+        }
+    }
+    peers.sort((a, b) => Number(a.isSelf) - Number(b.isSelf) || a.ip.localeCompare(b.ip));
+    return res.json({ ok: true, selfIps, peers });
+});
+app.post('/api/network/invite', (req, res) => {
+    try {
+        const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '' } = req.body || {};
+        const senderLabel = String(fromName || '').trim() || 'سیستم همکار در شبکه';
+        const cleanUrl = String(fromUrl || '').trim();
+        const cleanMsg = String(message || '').trim() ||
+            `درخواست اتصال از طرف «${senderLabel}»${cleanUrl ? ` (${cleanUrl})` : ''}`;
+        const saved = db.createMessage({
+            sender_role: fromRole === 'doctor' ? 'doctor' : 'secretary',
+            recipient_role: 'all',
+            body: cleanMsg,
+            kind: 'connection_invite',
+            meta: { fromName: senderLabel, fromUrl: cleanUrl },
+        });
+        broadcastEvent('new_message', saved);
+        broadcastEvent('connection_invite', {
+            id: saved.id,
+            fromName: senderLabel,
+            fromUrl: cleanUrl,
+            fromRole,
+            message: cleanMsg,
+            created_at: saved.created_at,
+        });
+        return res.status(201).json({ ok: true, message: saved });
+    }
+    catch (err) {
+        return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/network/send-invite', async (req, res) => {
+    try {
+        const { targetUrl = '', fromName = '', fromUrl = '', fromRole = 'secretary', message = '' } = req.body || {};
+        const cleanTarget = String(targetUrl || '').trim().replace(/\/+$/, '');
+        let parsed;
+        try {
+            parsed = new URL(cleanTarget);
+        }
+        catch {
+            return res.status(400).json({ ok: false, message: 'آدرس سیستم مقصد معتبر نیست.' });
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return res.status(400).json({ ok: false, message: 'فقط آدرس‌های http/https پشتیبانی می‌شوند.' });
+        }
+        const lanIps = getLanIps();
+        const selfUrl = fromUrl || (lanIps[0] ? `http://${lanIps[0]}:${PORT}` : `http://localhost:${PORT}`);
+        const senderName = String(fromName || '').trim() || node_os_1.default.hostname();
+        const resp = await fetch(`${cleanTarget}/api/network/invite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fromName: senderName,
+                fromUrl: selfUrl,
+                fromRole,
+                message: String(message || '').trim() || `لطفاً به سیستم مطب (${selfUrl}) متصل شوید.`,
+            }),
+            signal: AbortSignal.timeout(3500),
+        });
+        if (!resp.ok) {
+            return res.status(502).json({ ok: false, message: `سیستم مقصد پاسخ خطا داد (HTTP ${resp.status}).` });
+        }
+        return res.json({ ok: true, message: 'پیام اتصال به سیستم مقصد ارسال شد.' });
+    }
+    catch (err) {
+        return res.status(502).json({
+            ok: false,
+            message: err instanceof Error ? `عدم دسترسی به سیستم مقصد: ${err.message}` : 'عدم دسترسی به سیستم مقصد.',
+        });
+    }
+});
+// --- Doctor <-> Secretary Messaging ---
+app.get('/api/messages', (req, res) => {
+    try {
+        const limit = Number(req.query.limit) || 60;
+        const messages = db.listMessages(limit);
+        res.json({ ok: true, messages });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/messages', (req, res) => {
+    try {
+        const { sender_role = 'secretary', recipient_role = 'all', body = '', kind = 'chat', meta = {} } = req.body || {};
+        const saved = db.createMessage({ sender_role, recipient_role, body, kind, meta });
+        broadcastEvent('new_message', saved);
+        res.status(201).json({ ok: true, message: saved });
+    }
+    catch (err) {
+        res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/messages/read', (req, res) => {
+    try {
+        const role = req.body?.role === 'doctor' ? 'doctor' : 'secretary';
+        const updated = db.markMessagesRead(role);
+        if (updated > 0) {
+            broadcastEvent('messages_read', { role, updated });
+        }
+        res.json({ ok: true, updated });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
 });
 // --- Patients CRUD ---
 app.get('/api/patients', (req, res) => {
@@ -275,7 +446,7 @@ app.post('/api/patients/:id/attachments', (req, res) => {
         const uploadedBy = String(req.body?.uploaded_by || 'secretary').trim();
         const saved = [];
         for (const file of uploadedFiles) {
-            const originalName = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8');
+            const originalName = decodeOriginalFilename(file.originalname);
             const record = db.addAttachment({
                 patientId: patient.id,
                 originalName,

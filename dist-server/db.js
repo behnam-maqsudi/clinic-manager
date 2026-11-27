@@ -18,6 +18,9 @@ exports.addAttachment = addAttachment;
 exports.deleteAttachment = deleteAttachment;
 exports.createBackup = createBackup;
 exports.getDbPath = getDbPath;
+exports.listMessages = listMessages;
+exports.createMessage = createMessage;
+exports.markMessagesRead = markMessagesRead;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const node_sqlite_1 = require("node:sqlite");
@@ -66,6 +69,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_patients_visit_date ON patients(visit_date);
   CREATE INDEX IF NOT EXISTS idx_patients_status ON patients(status);
   CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
+
+  CREATE TABLE IF NOT EXISTS clinic_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_role TEXT NOT NULL CHECK (sender_role IN ('secretary', 'doctor', 'system')),
+    recipient_role TEXT NOT NULL DEFAULT 'all' CHECK (recipient_role IN ('secretary', 'doctor', 'all')),
+    body TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'connection_invite')),
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    read_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_clinic_messages_created_at ON clinic_messages(created_at);
 `);
 const columns = db.prepare('PRAGMA table_info(patients)').all();
 if (!columns.some((col) => col.name === 'file_number')) {
@@ -310,4 +326,58 @@ function createBackup() {
 function getDbPath() {
     db.exec('PRAGMA wal_checkpoint(PASSIVE);');
     return DB_PATH;
+}
+function hydrateMessage(row) {
+    let meta = {};
+    try {
+        meta = JSON.parse(row.meta_json || '{}');
+    }
+    catch {
+        meta = {};
+    }
+    return {
+        id: row.id,
+        sender_role: row.sender_role,
+        recipient_role: row.recipient_role,
+        body: row.body,
+        kind: row.kind,
+        meta,
+        read_at: row.read_at,
+        created_at: row.created_at,
+    };
+}
+function listMessages(limit = 60) {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 60));
+    const rows = db
+        .prepare('SELECT * FROM clinic_messages ORDER BY id DESC LIMIT ?')
+        .all(safeLimit);
+    return rows.reverse().map(hydrateMessage);
+}
+function createMessage(input) {
+    const body = String(input.body || '').trim();
+    if (!body) {
+        throw new Error('متن پیام نمی‌تواند خالی باشد.');
+    }
+    const senderRole = input.sender_role === 'doctor' || input.sender_role === 'system' ? input.sender_role : 'secretary';
+    const recipientRole = input.recipient_role === 'doctor' || input.recipient_role === 'secretary' ? input.recipient_role : 'all';
+    const kind = input.kind === 'connection_invite' ? 'connection_invite' : 'chat';
+    const metaJson = JSON.stringify(input.meta || {});
+    const now = new Date().toISOString();
+    const res = db
+        .prepare(`INSERT INTO clinic_messages (sender_role, recipient_role, body, kind, meta_json, read_at, created_at)
+       VALUES (?, ?, ?, ?, ?, '', ?)`)
+        .run(senderRole, recipientRole, body, kind, metaJson, now);
+    const created = db
+        .prepare('SELECT * FROM clinic_messages WHERE id = ?')
+        .get(Number(res.lastInsertRowid));
+    return hydrateMessage(created);
+}
+function markMessagesRead(role) {
+    const now = new Date().toISOString();
+    const res = db
+        .prepare(`UPDATE clinic_messages
+       SET read_at = ?
+       WHERE read_at = '' AND (recipient_role = ? OR recipient_role = 'all') AND sender_role != ?`)
+        .run(now, role, role);
+    return Number(res.changes || 0);
 }
