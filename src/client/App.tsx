@@ -1,4 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import DatePicker, { DateObject } from 'react-multi-date-picker';
+import persian from 'react-date-object/calendars/persian';
+import persian_fa from 'react-date-object/locales/persian_fa';
+import gregorian from 'react-date-object/calendars/gregorian';
+import gregorian_en from 'react-date-object/locales/gregorian_en';
 import type {
   Attachment,
   GitUpdateStatus,
@@ -13,6 +18,7 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Copy,
   Database,
@@ -136,8 +142,9 @@ export default function App() {
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<'today' | 'all' | 'custom'>('today');
-  const [customDate, setCustomDate] = useState('');
+  const [customRange, setCustomRange] = useState<DateObject[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | PatientStatus>('all');
   const [sseConnected, setSseConnected] = useState(true);
 
@@ -174,6 +181,11 @@ export default function App() {
   const [qrInfo, setQrInfo] = useState({ qrDataUrl: '', uploadUrl: '' });
   const [pcUploadTitle, setPcUploadTitle] = useState('');
 
+  const [detailPatient, setDetailPatient] = useState<Patient | null>(null);
+  const [detailNotes, setDetailNotes] = useState('');
+  const [detailAttachments, setDetailAttachments] = useState<Attachment[]>([]);
+  const [isSavingDetailNotes, setIsSavingDetailNotes] = useState(false);
+
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkTab, setBulkTab] = useState<'grid' | 'paste'>('grid');
   const [bulkDate, setBulkDate] = useState(getTodayIso());
@@ -182,7 +194,6 @@ export default function App() {
   );
   const [bulkPasteText, setBulkPasteText] = useState('');
 
-  const [networkModalOpen, setNetworkModalOpen] = useState(false);
   const [lanUrls, setLanUrls] = useState<string[]>([]);
 
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
@@ -198,6 +209,12 @@ export default function App() {
 
   const activeLabIdRef = useRef<number | null>(null);
   activeLabIdRef.current = labModalPatientId;
+  const detailPatientRef = useRef<Patient | null>(null);
+  detailPatientRef.current = detailPatient;
+  const detailSessionRef = useRef(0);
+  const detailNotesDirtyRef = useRef(false);
+  const detailOpenerRef = useRef<HTMLElement | null>(null);
+  const detailCloseBtnRef = useRef<HTMLButtonElement | null>(null);
   const roleRef = useRef<UserRole>(role);
   roleRef.current = role;
   const toastTimerRef = useRef<number | undefined>(undefined);
@@ -223,13 +240,33 @@ export default function App() {
     localStorage.setItem('clinic_dev_mode', String(devMode));
   }, [devMode]);
 
+  function toIsoDateString(d: DateObject | null | undefined): string {
+    if (!d) return '';
+    return new DateObject(d).convert(gregorian, gregorian_en).format('YYYY-MM-DD');
+  }
+
+  function isoToPersianDateObj(iso: string): DateObject {
+    const [y, m, d] = (iso || getTodayIso()).split('-').map(Number);
+    return new DateObject({ year: y, month: m, day: d, calendar: gregorian, locale: gregorian_en }).convert(
+      persian,
+      persian_fa
+    );
+  }
+
   async function fetchPatients() {
     const params = new URLSearchParams();
-    if (query.trim()) params.set('q', query.trim());
+    if (debouncedQuery.trim()) params.set('q', debouncedQuery.trim());
     if (statusFilter !== 'all') params.set('status', statusFilter);
-    if (dateFilter === 'today') params.set('date', getTodayIso());
-    else if (dateFilter === 'custom' && customDate) params.set('date', customDate);
-    else params.set('date', 'all');
+    if (dateFilter === 'today') {
+      params.set('date', getTodayIso());
+    } else if (dateFilter === 'custom' && customRange.length > 0) {
+      const fromIso = toIsoDateString(customRange[0]);
+      const toIso = customRange[1] ? toIsoDateString(customRange[1]) : fromIso;
+      params.set('date_from', fromIso);
+      params.set('date_to', toIso);
+    } else {
+      params.set('date', 'all');
+    }
 
     const res = await fetch(`/api/patients?${params.toString()}`);
     const data = await res.json();
@@ -238,22 +275,46 @@ export default function App() {
     }
   }
 
+  const fetchPatientsRef = useRef(fetchPatients);
+  fetchPatientsRef.current = fetchPatients;
+
+  // 1 second pause after typing before searching (instant when cleared)
   useEffect(() => {
-    const t = setTimeout(fetchPatients, 120);
+    if (!query.trim()) {
+      setDebouncedQuery('');
+      return;
+    }
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), 1000);
     return () => clearTimeout(t);
-  }, [query, dateFilter, customDate, statusFilter]);
+  }, [query]);
+
+  // Fetch immediately when filters or debouncedQuery change
+  useEffect(() => {
+    fetchPatients();
+  }, [debouncedQuery, dateFilter, customRange, statusFilter]);
 
   // SSE Live Sync
   useEffect(() => {
     const evtSource = new EventSource('/api/events');
     evtSource.addEventListener('connected', () => setSseConnected(true));
-    evtSource.addEventListener('patients_changed', () => fetchPatients());
+    evtSource.addEventListener('patients_changed', () => fetchPatientsRef.current());
     evtSource.addEventListener('attachments_changed', (e) => {
-      fetchPatients();
+      fetchPatientsRef.current();
       try {
         const payload = JSON.parse(e.data);
         if (activeLabIdRef.current === payload.patientId) {
           loadAttachments(payload.patientId);
+        }
+        if (detailPatientRef.current?.id === payload.patientId) {
+          const sessionId = detailSessionRef.current;
+          fetch(`/api/patients/${payload.patientId}/attachments`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.ok && detailSessionRef.current === sessionId) {
+                setDetailAttachments(data.attachments || []);
+              }
+            })
+            .catch(() => {});
         }
       } catch {}
     });
@@ -351,6 +412,70 @@ export default function App() {
     }
   }
 
+  function closePatientDetails() {
+    detailSessionRef.current += 1;
+    detailNotesDirtyRef.current = false;
+    setDetailPatient(null);
+    const opener = detailOpenerRef.current;
+    detailOpenerRef.current = null;
+    if (opener && typeof opener.focus === 'function') {
+      requestAnimationFrame(() => opener.focus());
+    }
+  }
+
+  async function openPatientDetails(p: Patient) {
+    detailOpenerRef.current = document.activeElement as HTMLElement | null;
+    detailSessionRef.current += 1;
+    const sessionId = detailSessionRef.current;
+    detailNotesDirtyRef.current = false;
+    setDetailPatient(p);
+    setDetailNotes(p.notes || '');
+    setDetailAttachments([]);
+    requestAnimationFrame(() => detailCloseBtnRef.current?.focus());
+
+    const res = await fetch(`/api/patients/${p.id}/attachments`);
+    const data = await res.json();
+    if (data.ok && detailSessionRef.current === sessionId) {
+      setDetailPatient(data.patient);
+      if (!detailNotesDirtyRef.current) {
+        setDetailNotes(data.patient.notes || '');
+      }
+      setDetailAttachments(data.attachments || []);
+    }
+  }
+
+  async function saveDetailNotes() {
+    if (!detailPatient || isSavingDetailNotes) return;
+    const sessionId = detailSessionRef.current;
+    setIsSavingDetailNotes(true);
+    try {
+      const res = await fetch(`/api/patients/${detailPatient.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: detailNotes,
+          actor_role: role,
+          expected_updated_at: detailPatient.updated_at,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        notify(data.message || 'خطا در ذخیره یادداشت');
+        return;
+      }
+      if (detailSessionRef.current === sessionId) {
+        detailNotesDirtyRef.current = false;
+        setDetailPatient(data.patient);
+      }
+      notify('یادداشت پرونده ذخیره شد.');
+      fetchPatients();
+    } catch {
+      notify('خطا در ارتباط با سرور هنگام ذخیره یادداشت');
+    } finally {
+      setIsSavingDetailNotes(false);
+    }
+  }
+
   async function quickStatus(id: number, status: PatientStatus) {
     const res = await fetch(`/api/patients/${id}`, {
       method: 'PUT',
@@ -359,6 +484,7 @@ export default function App() {
     });
     const data = await res.json();
     if (data.ok) {
+      setDetailPatient((prev) => (prev?.id === id ? data.patient : prev));
       notify('وضعیت مراجعه‌کننده بروزرسانی شد.');
       fetchPatients();
     }
@@ -473,20 +599,15 @@ export default function App() {
     }
   }
 
-  // Network & Settings
-  async function openNetworkModal() {
-    setNetworkModalOpen(true);
-    const res = await fetch('/api/health');
-    const data = await res.json();
-    setLanUrls(data.urls?.length ? data.urls : [data.localUrl]);
-  }
-
+  // Settings & Network Info
   async function openSettingsModal() {
     setSettingsModalOpen(true);
     setBackupMessage('');
-    const res = await fetch('/api/update/status');
-    const data = await res.json();
-    setGitStatus(data);
+    const [updRes, healthRes] = await Promise.all([fetch('/api/update/status'), fetch('/api/health')]);
+    const updData = await updRes.json();
+    const healthData = await healthRes.json();
+    setGitStatus(updData);
+    setLanUrls(healthData.urls?.length ? healthData.urls : [healthData.localUrl]);
   }
 
   async function applyGitUpdate() {
@@ -595,11 +716,6 @@ export default function App() {
               <span className="hidden lg:inline">ورود از دفتر</span>
             </button>
 
-            <button onClick={openNetworkModal} style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="px-3 py-2 rounded-xl border hover:opacity-90 text-xs font-medium inline-flex items-center gap-1.5">
-              <Wifi className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-              <span className="hidden md:inline">شبکه مطب</span>
-            </button>
-
             <button onClick={openSettingsModal} style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="px-3 py-2 rounded-xl border hover:opacity-90 text-xs font-medium inline-flex items-center gap-1.5">
               <Settings className="w-4 h-4" style={{ color: 'var(--accent)' }} />
               <span className="hidden md:inline">تنظیمات</span>
@@ -646,58 +762,102 @@ export default function App() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="جستجو با نام، شماره پرونده، ۴ رقم آخر موبایل یا کد ملی..."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setDebouncedQuery(query.trim());
+              }}
+              placeholder="جستجو با نام، شماره پرونده، شماره تماس یا کد ملی..."
               style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
               className="w-full pr-10 pl-4 py-2.5 rounded-xl border focus:outline-none text-sm"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex p-1 rounded-xl border">
+          <div className="flex flex-wrap items-center gap-2.5 text-xs">
+            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex items-center p-1 rounded-xl border gap-1">
               <button
-                onClick={() => { setDateFilter('today'); setCustomDate(''); }}
+                onClick={() => { setDateFilter('today'); setCustomRange([]); }}
                 style={dateFilter === 'today' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-3.5 py-1.5 rounded-lg font-semibold"
+                className="px-3.5 py-1.5 rounded-lg font-semibold transition-all"
               >
                 امروز
               </button>
               <button
-                onClick={() => { setDateFilter('all'); setCustomDate(''); }}
+                onClick={() => { setDateFilter('all'); setCustomRange([]); }}
                 style={dateFilter === 'all' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-3.5 py-1.5 rounded-lg font-semibold"
+                className="px-3.5 py-1.5 rounded-lg font-semibold transition-all"
               >
                 همه روزها
               </button>
+
+              <DatePicker
+                range
+                calendar={persian}
+                locale={persian_fa}
+                calendarPosition="bottom-center"
+                value={customRange}
+                onChange={(val) => {
+                  const arr = Array.isArray(val) ? val : val ? [val] : [];
+                  setCustomRange(arr as DateObject[]);
+                  setDateFilter(arr.length > 0 ? 'custom' : 'today');
+                }}
+                render={(_value, openCalendar) => {
+                  const isCustom = dateFilter === 'custom' && customRange.length > 0;
+                  const label = isCustom
+                    ? customRange.length === 2
+                      ? `${customRange[0].format('YYYY/MM/DD')} تا ${customRange[1].format('YYYY/MM/DD')}`
+                      : customRange[0].format('YYYY/MM/DD')
+                    : 'انتخاب تاریخ شمسی';
+                  return (
+                    <div
+                      style={
+                        isCustom
+                          ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' }
+                          : { color: 'var(--text-muted)' }
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg transition-all"
+                    >
+                      <button
+                        type="button"
+                        onClick={openCalendar}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold cursor-pointer"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>{label}</span>
+                      </button>
+                      {isCustom && (
+                        <button
+                          type="button"
+                          aria-label="پاک کردن فیلتر تاریخ"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCustomRange([]);
+                            setDateFilter('today');
+                          }}
+                          className="pl-2 pr-0.5 py-1 hover:opacity-70"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                }}
+              />
             </div>
 
-            <label style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border cursor-pointer">
-              <Calendar className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-              <span>{dateFilter === 'custom' && customDate ? formatShamsiDate(customDate) : 'انتخاب تاریخ'}</span>
-              <input
-                type="date"
-                value={customDate}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setCustomDate(e.target.value);
-                    setDateFilter('custom');
-                  }
-                }}
-                className="sr-only"
-              />
-            </label>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | PatientStatus)}
-              style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-              className="px-3.5 py-2 rounded-xl border text-xs font-medium focus:outline-none cursor-pointer"
-            >
-              <option value="all">همه وضعیت‌ها</option>
-              <option value="waiting">در انتظار</option>
-              <option value="in_progress">در حال ویزیت</option>
-              <option value="visited">ویزیت‌شده</option>
-              <option value="cancelled">لغو شده</option>
-            </select>
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as 'all' | PatientStatus)}
+                style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                className="appearance-none pr-3.5 pl-8 py-2.5 rounded-xl border text-xs font-medium focus:outline-none cursor-pointer"
+              >
+                <option value="all">همه وضعیت‌ها</option>
+                <option value="waiting">در انتظار</option>
+                <option value="in_progress">در حال ویزیت</option>
+                <option value="visited">ویزیت‌شده</option>
+                <option value="cancelled">لغو شده</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 pointer-events-none absolute left-2.5 top-2.5" />
+            </div>
           </div>
         </section>
 
@@ -712,10 +872,7 @@ export default function App() {
                     <th className="py-3.5 px-4">نام و شماره پرونده</th>
                     <th className="py-3.5 px-4">شماره تماس</th>
                     <th className="py-3.5 px-4">کد ملی</th>
-                    <th className="py-3.5 px-4">تاریخ شمسی</th>
                     <th className="py-3.5 px-4">وضعیت</th>
-                    <th className="py-3.5 px-4">مدارک و آزمایش‌ها</th>
-                    <th className="py-3.5 px-4">یادداشت</th>
                     <th className="py-3.5 px-4 text-left">عملیات</th>
                   </tr>
                 </thead>
@@ -724,7 +881,11 @@ export default function App() {
                     const st = STATUS_META[p.status] || STATUS_META.waiting;
                     const timeLabel = p.visit_time ? toPersianDigits(p.visit_time) : toPersianDigits(idx + 1);
                     return (
-                      <tr key={p.id} className="hover:bg-slate-500/5 transition-colors">
+                      <tr
+                        key={p.id}
+                        onClick={() => openPatientDetails(p)}
+                        className="hover:bg-slate-500/10 transition-colors cursor-pointer"
+                      >
                         <td className="py-3.5 px-4 font-bold tabular-nums">{timeLabel}</td>
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-2.5">
@@ -733,10 +894,25 @@ export default function App() {
                             </div>
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold">{p.full_name}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openPatientDetails(p);
+                                  }}
+                                  className="font-semibold text-right hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 rounded"
+                                >
+                                  {p.full_name}
+                                </button>
                                 {p.file_number && (
                                   <span style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="px-2 py-0.5 rounded-md border text-[11px] font-bold tabular-nums">
                                     پرونده {toPersianDigits(p.file_number)}
+                                  </span>
+                                )}
+                                {(p.attachment_count ?? 0) > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-bold tabular-nums">
+                                    <Paperclip className="w-3 h-3" />
+                                    {toPersianDigits(p.attachment_count)}
                                   </span>
                                 )}
                               </div>
@@ -748,50 +924,66 @@ export default function App() {
                         </td>
                         <td className="py-3.5 px-4 font-mono text-xs tabular-nums" dir="ltr">{p.phone || '—'}</td>
                         <td className="py-3.5 px-4 font-mono text-xs tabular-nums" dir="ltr">{p.national_id || '—'}</td>
-                        <td className="py-3.5 px-4 text-xs tabular-nums">{formatShamsiDate(p.visit_date)}</td>
                         <td className="py-3.5 px-4">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${st.badge}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                             {st.label}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4">
-                          <button
-                            onClick={() => openLabModal(p.id)}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${
-                              (p.attachment_count ?? 0) > 0
-                                ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
-                                : 'bg-slate-100/70 hover:bg-slate-200/70 text-slate-600 border-slate-200'
-                            }`}
-                          >
-                            <Paperclip className="w-3.5 h-3.5" />
-                            <span>{(p.attachment_count ?? 0) > 0 ? `${toPersianDigits(p.attachment_count)} آزمایش` : 'افزودن آزمایش'}</span>
-                          </button>
-                        </td>
-                        <td style={{ color: 'var(--text-muted)' }} className="py-3.5 px-4 text-xs max-w-[180px] truncate" title={p.notes}>
-                          {p.notes || '—'}
-                        </td>
                         <td className="py-3.5 px-4 text-left">
                           <div className="inline-flex items-center gap-1">
                             {p.status === 'waiting' && (
-                              <button onClick={() => quickStatus(p.id, 'in_progress')} style={{ backgroundColor: 'var(--accent)' }} className="px-2.5 py-1.5 rounded-lg text-white text-xs font-semibold">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  quickStatus(p.id, 'in_progress');
+                                }}
+                                style={{ backgroundColor: 'var(--accent)' }}
+                                className="px-2.5 py-1.5 rounded-lg text-white text-xs font-semibold"
+                              >
                                 شروع ویزیت
                               </button>
                             )}
                             {p.status === 'in_progress' && (
-                              <button onClick={() => quickStatus(p.id, 'visited')} className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  quickStatus(p.id, 'visited');
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                              >
                                 ویزیت شد ✓
                               </button>
                             )}
                             {p.visit_date !== getTodayIso() && (
-                              <button onClick={() => rebookToday(p)} className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  rebookToday(p);
+                                }}
+                                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold"
+                              >
                                 نوبت امروز
                               </button>
                             )}
-                            <button onClick={() => openEditPatientModal(p)} className="p-1.5 rounded-lg hover:bg-slate-500/10" title="ویرایش">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditPatientModal(p);
+                              }}
+                              className="p-1.5 rounded-lg hover:bg-slate-500/10"
+                              title="ویرایش"
+                            >
                               <Pencil className="w-4 h-4 text-slate-400" />
                             </button>
-                            <button onClick={() => removePatient(p.id)} className="p-1.5 rounded-lg hover:bg-rose-500/10" title="حذف">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removePatient(p.id);
+                              }}
+                              className="p-1.5 rounded-lg hover:bg-rose-500/10"
+                              title="حذف"
+                            >
                               <Trash2 className="w-4 h-4 text-rose-500" />
                             </button>
                           </div>
@@ -931,13 +1123,16 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold mb-1.5">تاریخ مراجعه</label>
-                  <input
-                    type="date"
-                    required
-                    value={formState.visit_date}
-                    onChange={(e) => setFormState({ ...formState, visit_date: e.target.value })}
-                    style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-                    className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+                  <DatePicker
+                    calendar={persian}
+                    locale={persian_fa}
+                    value={isoToPersianDateObj(formState.visit_date)}
+                    onChange={(d) => {
+                      const iso = toIsoDateString(d as DateObject | null);
+                      if (iso) setFormState({ ...formState, visit_date: iso });
+                    }}
+                    inputClass="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none bg-slate-50 border-slate-200 text-slate-900"
+                    containerClassName="w-full"
                   />
                 </div>
                 <div>
@@ -1154,7 +1349,16 @@ export default function App() {
               </button>
               <div className="mr-auto flex items-center gap-2 text-xs">
                 <span style={{ color: 'var(--text-muted)' }}>تاریخ نوبت:</span>
-                <input type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-lg border text-xs py-1 px-2" />
+                <DatePicker
+                  calendar={persian}
+                  locale={persian_fa}
+                  value={isoToPersianDateObj(bulkDate)}
+                  onChange={(d) => {
+                    const iso = toIsoDateString(d as DateObject | null);
+                    if (iso) setBulkDate(iso);
+                  }}
+                  inputClass="rounded-lg border text-xs py-1 px-2 w-28 bg-slate-50 border-slate-200 text-slate-900 text-center"
+                />
               </div>
             </div>
 
@@ -1270,36 +1474,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal 4: Network Info */}
-      {networkModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-md w-full shadow-2xl overflow-hidden">
-            <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
-              <h3 className="font-bold text-base">اتصال سیستم پزشک و موبایل در شبکه</h3>
-              <button onClick={() => setNetworkModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-500/10">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-3 text-xs leading-6">
-              <p style={{ color: 'var(--text-muted)' }}>آدرس زیر را در سیستم دکتر بهامین جهانیان باز کنید تا هم‌زمان به همین لیست متصل شود:</p>
-              {lanUrls.map((url) => (
-                <div key={url} style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex items-center justify-between p-2.5 rounded-xl border">
-                  <code className="font-mono font-bold" style={{ color: 'var(--accent)' }} dir="ltr">{url}</code>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(url); notify('آدرس کپی شد.'); }}
-                    className="px-2.5 py-1 rounded-lg bg-white text-slate-700 border text-xs font-semibold inline-flex items-center gap-1"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    کپی
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal 5: Settings (Themes + Dev Mode + Backup + Git Update) */}
+      {/* Modal 5: Settings (Themes + Dev Mode + Clinic Connection + Backup + Git Update) */}
       {settingsModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
@@ -1381,6 +1556,29 @@ export default function App() {
                 )}
               </div>
 
+              {/* Clinic Second PC Connection */}
+              {lanUrls.length > 0 && (
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-2xl border p-4 space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <Wifi className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                    <h4 className="text-sm font-bold">آدرس اتصال سیستم اتاق پزشک</h4>
+                  </div>
+                  <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
+                    در نصب اولیه روی سیستم پزشک، این آدرس را وارد کنید:
+                  </p>
+                  <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="flex items-center justify-between p-2.5 rounded-xl border">
+                    <code className="text-xs font-mono font-bold" style={{ color: 'var(--accent)' }} dir="ltr">{lanUrls[0]}</code>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(lanUrls[0]); notify('آدرس کپی شد.'); }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center gap-1"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      کپی
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Git Update */}
               <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-2xl border p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -1422,6 +1620,190 @@ export default function App() {
                   </a>
                 </div>
                 {backupMessage && <p className="text-xs text-emerald-600 font-semibold">{backupMessage}</p>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 6: Patient Full Details */}
+      {detailPatient && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="detail-modal-title"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') closePatientDetails();
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-2xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent-soft-text)' }} className="w-11 h-11 rounded-full font-bold text-base flex items-center justify-center shrink-0">
+                  {(detailPatient.full_name || '?').trim().charAt(0)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 id="detail-modal-title" className="font-bold text-base">{detailPatient.full_name}</h3>
+                    {detailPatient.file_number && (
+                      <span style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="px-2.5 py-0.5 rounded-lg border text-xs font-bold tabular-nums">
+                        پرونده {toPersianDigits(detailPatient.file_number)}
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-0.5">
+                    ثبت توسط {detailPatient.created_by === 'doctor' ? 'پزشک' : 'منشی'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  disabled={isSavingDetailNotes}
+                  onClick={() => {
+                    const p = { ...detailPatient, notes: detailNotes };
+                    closePatientDetails();
+                    openEditPatientModal(p);
+                  }}
+                  style={{ borderColor: 'var(--border-main)' }}
+                  className="px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  ویرایش کامل
+                </button>
+                <button
+                  ref={detailCloseBtnRef}
+                  aria-label="بستن جزئیات"
+                  onClick={closePatientDetails}
+                  className="p-1.5 rounded-lg hover:bg-slate-500/10"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto">
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>شماره تماس</p>
+                  <p className="font-mono font-bold mt-1" dir="ltr">{detailPatient.phone || '—'}</p>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>کد ملی</p>
+                  <p className="font-mono font-bold mt-1" dir="ltr">{detailPatient.national_id || '—'}</p>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>تاریخ شمسی</p>
+                  <p className="font-bold mt-1 tabular-nums">{formatShamsiDate(detailPatient.visit_date)}</p>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>ساعت نوبت</p>
+                  <p className="font-bold mt-1 tabular-nums">{detailPatient.visit_time ? toPersianDigits(detailPatient.visit_time) : '—'}</p>
+                </div>
+              </div>
+
+              {/* Quick Status Switcher */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold">وضعیت ویزیت</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['waiting', 'in_progress', 'visited', 'cancelled'] as PatientStatus[]).map((stKey) => {
+                    const meta = STATUS_META[stKey];
+                    const active = detailPatient.status === stKey;
+                    return (
+                      <button
+                        key={stKey}
+                        onClick={() => quickStatus(detailPatient.id, stKey)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all inline-flex items-center gap-1.5 ${
+                          active ? `${meta.badge} border-current shadow-2xs` : 'bg-transparent border-slate-300/60 opacity-70 hover:opacity-100'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Full Notes Editor */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold">یادداشت کامل پزشک / منشی</label>
+                <textarea
+                  rows={4}
+                  value={detailNotes}
+                  onChange={(e) => {
+                    detailNotesDirtyRef.current = true;
+                    setDetailNotes(e.target.value);
+                  }}
+                  style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                  className="w-full rounded-xl border p-3 text-sm leading-6 focus:outline-none"
+                  placeholder="یادداشتی ثبت نشده است..."
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {QUICK_NOTES.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => {
+                          detailNotesDirtyRef.current = true;
+                          setDetailNotes((n) => (n.trim() ? `${n.trim()} • ${chip}` : chip));
+                        }}
+                        style={{ backgroundColor: 'var(--bg-subtle)' }}
+                        className="px-2.5 py-1 rounded-full text-[11px] hover:opacity-80"
+                      >
+                        + {chip}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    disabled={isSavingDetailNotes}
+                    onClick={saveDetailNotes}
+                    style={{ backgroundColor: 'var(--accent)' }}
+                    className="px-4 py-2 rounded-xl text-white text-xs font-semibold disabled:opacity-50"
+                  >
+                    {isSavingDetailNotes ? 'در حال ذخیره...' : 'ذخیره یادداشت'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Attachments Preview */}
+              <div style={{ borderColor: 'var(--border-main)' }} className="border-t pt-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold">مدارک و آزمایش‌ها ({toPersianDigits(detailAttachments.length)} مورد)</h4>
+                  <button
+                    onClick={() => {
+                      const id = detailPatient.id;
+                      closePatientDetails();
+                      openLabModal(id);
+                    }}
+                    style={{ color: 'var(--accent)' }}
+                    className="text-xs font-semibold inline-flex items-center gap-1 hover:underline"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    مدیریت فایل‌ها / اسکن QR موبایل
+                  </button>
+                </div>
+                {detailAttachments.length > 0 ? (
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {detailAttachments.map((att) => (
+                      <a
+                        key={att.id}
+                        href={`/api/attachments/${att.id}/file`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                        className="flex items-center justify-between p-2.5 rounded-xl border text-xs hover:opacity-90"
+                      >
+                        <span className="truncate font-semibold">{att.title || att.original_name}</span>
+                        <Eye className="w-4 h-4 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: 'var(--text-muted)' }} className="text-xs">مدرکی پیوست نشده است.</p>
+                )}
               </div>
             </div>
           </div>

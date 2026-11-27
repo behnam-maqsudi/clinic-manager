@@ -86,10 +86,18 @@ function normalizeStatus(value, fallback = 'waiting') {
         ? value
         : fallback;
 }
-function listPatients({ q = '', date = '', status = '' } = {}) {
+function listPatients({ q = '', date = '', dateFrom = '', dateTo = '', status = '', } = {}) {
     const conditions = [];
     const params = [];
-    if (date && date !== 'all') {
+    if (dateFrom && dateTo) {
+        conditions.push('p.visit_date >= ? AND p.visit_date <= ?');
+        params.push(dateFrom, dateTo);
+    }
+    else if (dateFrom) {
+        conditions.push('p.visit_date = ?');
+        params.push(dateFrom);
+    }
+    else if (date && date !== 'all') {
         conditions.push('p.visit_date = ?');
         params.push(date);
     }
@@ -161,6 +169,11 @@ function updatePatient(id, payload) {
     const existing = getPatientById(id);
     if (!existing) {
         return null;
+    }
+    if (payload.expected_updated_at && existing.updated_at !== payload.expected_updated_at) {
+        const err = new Error('اطلاعات این پرونده هم‌زمان تغییر کرده است. لطفاً پنجره را ببندید و دوباره باز کنید.');
+        err.statusCode = 409;
+        throw err;
     }
     const fullName = payload.full_name !== undefined ? String(payload.full_name).trim() : existing.full_name;
     if (!fullName) {

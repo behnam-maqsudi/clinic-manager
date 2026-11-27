@@ -75,11 +75,29 @@ function normalizeStatus(value: unknown, fallback: PatientStatus = 'waiting'): P
     : fallback;
 }
 
-export function listPatients({ q = '', date = '', status = '' } = {}): Patient[] {
+export function listPatients({
+  q = '',
+  date = '',
+  dateFrom = '',
+  dateTo = '',
+  status = '',
+}: {
+  q?: string;
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  status?: string;
+} = {}): Patient[] {
   const conditions: string[] = [];
   const params: string[] = [];
 
-  if (date && date !== 'all') {
+  if (dateFrom && dateTo) {
+    conditions.push('p.visit_date >= ? AND p.visit_date <= ?');
+    params.push(dateFrom, dateTo);
+  } else if (dateFrom) {
+    conditions.push('p.visit_date = ?');
+    params.push(dateFrom);
+  } else if (date && date !== 'all') {
     conditions.push('p.visit_date = ?');
     params.push(date);
   }
@@ -161,6 +179,12 @@ export function updatePatient(id: number | string, payload: Partial<PatientInput
   const existing = getPatientById(id);
   if (!existing) {
     return null;
+  }
+
+  if (payload.expected_updated_at && existing.updated_at !== payload.expected_updated_at) {
+    const err = new Error('اطلاعات این پرونده هم‌زمان تغییر کرده است. لطفاً پنجره را ببندید و دوباره باز کنید.');
+    (err as Error & { statusCode?: number }).statusCode = 409;
+    throw err;
   }
 
   const fullName = payload.full_name !== undefined ? String(payload.full_name).trim() : existing.full_name;

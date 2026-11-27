@@ -28,6 +28,7 @@ export interface PatientInput {
   notes?: string;
   created_by?: UserRole;
   actor_role?: UserRole;
+  expected_updated_at?: string;
 }
 
 export interface ReturningMatch {
