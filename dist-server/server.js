@@ -70,15 +70,25 @@ function broadcastEvent(event, data = {}) {
 }
 function getLanIps() {
     const interfaces = node_os_1.default.networkInterfaces();
-    const ips = [];
+    const preferred = [];
+    const fallback = [];
+    const virtualPattern = /(vethernet|wsl|docker|vmware|virtualbox|vbox|hyper-v|loopback|tailscale|zerotier)/i;
     for (const name of Object.keys(interfaces)) {
+        const isVirtual = virtualPattern.test(name);
         for (const iface of interfaces[name] || []) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-                ips.push(iface.address);
+            if (iface.family !== 'IPv4' || iface.internal)
+                continue;
+            if (iface.address.startsWith('169.254.'))
+                continue;
+            if (!isVirtual && (iface.address.startsWith('192.168.') || iface.address.startsWith('10.'))) {
+                preferred.push(iface.address);
+            }
+            else if (!isVirtual) {
+                fallback.push(iface.address);
             }
         }
     }
-    return ips;
+    return preferred.length > 0 ? preferred : fallback;
 }
 function getPrimaryBaseUrl(req) {
     const ips = getLanIps();

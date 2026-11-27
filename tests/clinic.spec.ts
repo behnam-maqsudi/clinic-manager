@@ -18,6 +18,7 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
 
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'مطب دکتر بهامین جهانیان' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'شبکه مطب' })).toHaveCount(0);
 
     // 1. Create patient with file_number + quick note chip
     await page.getByRole('button', { name: 'ثبت مراجعه‌کننده' }).click();
