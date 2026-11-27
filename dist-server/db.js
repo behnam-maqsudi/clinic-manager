@@ -21,8 +21,12 @@ exports.getDbPath = getDbPath;
 exports.listMessages = listMessages;
 exports.createMessage = createMessage;
 exports.markMessagesRead = markMessagesRead;
+exports.getSetupState = getSetupState;
+exports.completeSetup = completeSetup;
+exports.verifyDoctorPin = verifyDoctorPin;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const node_sqlite_1 = require("node:sqlite");
 const DATA_DIR = process.env.CLINIC_DATA_DIR
     ? node_path_1.default.resolve(process.env.CLINIC_DATA_DIR)
@@ -82,6 +86,11 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_clinic_messages_created_at ON clinic_messages(created_at);
+
+  CREATE TABLE IF NOT EXISTS clinic_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 const columns = db.prepare('PRAGMA table_info(patients)').all();
 if (!columns.some((col) => col.name === 'file_number')) {
@@ -380,4 +389,46 @@ function markMessagesRead(role) {
        WHERE read_at = '' AND (recipient_role = ? OR recipient_role = 'all') AND sender_role != ?`)
         .run(now, role, role);
     return Number(res.changes || 0);
+}
+function getSetting(key) {
+    const row = db.prepare('SELECT value FROM clinic_settings WHERE key = ?').get(key);
+    return row?.value || '';
+}
+function setSetting(key, value) {
+    db.prepare('INSERT INTO clinic_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+}
+function hashPin(pin, salt) {
+    const useSalt = salt || node_crypto_1.default.randomBytes(16).toString('hex');
+    const derived = node_crypto_1.default.scryptSync(pin, useSalt, 32).toString('hex');
+    return `${useSalt}:${derived}`;
+}
+function getSetupState() {
+    const setupCompleted = getSetting('setup_completed') === 'true';
+    const rawRole = getSetting('primary_role');
+    const primaryRole = rawRole === 'doctor' || rawRole === 'secretary' ? rawRole : null;
+    const hasDoctorPin = Boolean(getSetting('doctor_pin_hash'));
+    return { setupCompleted, primaryRole, hasDoctorPin };
+}
+function completeSetup(input) {
+    const pin = String(input.doctorPin || '').trim();
+    if (pin.length < 4) {
+        throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
+    }
+    const role = input.primaryRole === 'secretary' ? 'secretary' : 'doctor';
+    setSetting('primary_role', role);
+    setSetting('doctor_pin_hash', hashPin(pin));
+    setSetting('setup_completed', 'true');
+    return getSetupState();
+}
+function verifyDoctorPin(pin) {
+    const stored = getSetting('doctor_pin_hash');
+    if (!stored)
+        return false;
+    const [salt, expectedHex] = stored.split(':');
+    if (!salt || !expectedHex)
+        return false;
+    const actualHex = node_crypto_1.default.scryptSync(String(pin || '').trim(), salt, 32).toString('hex');
+    const a = Buffer.from(expectedHex, 'hex');
+    const b = Buffer.from(actualHex, 'hex');
+    return a.length === b.length && node_crypto_1.default.timingSafeEqual(a, b);
 }

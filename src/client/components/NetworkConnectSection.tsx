@@ -4,6 +4,7 @@ import type { DiscoveredPeer, UserRole } from '../../shared/types';
 
 interface NetworkConnectSectionProps {
   role: UserRole;
+  clientId: string;
   isElectron: boolean;
   remoteUrlInput: string;
   setRemoteUrlInput: (val: string) => void;
@@ -15,6 +16,7 @@ interface NetworkConnectSectionProps {
 
 export function NetworkConnectSection({
   role,
+  clientId,
   isElectron,
   remoteUrlInput,
   setRemoteUrlInput,
@@ -60,6 +62,7 @@ export function NetworkConnectSection({
         body: JSON.stringify({
           targetUrl: peerUrl,
           fromRole: role,
+          senderClientId: clientId,
           message: inviteNote.trim() || 'لطفاً به سیستم مطب متصل شوید یا پیام را تأیید کنید.',
         }),
       });
@@ -171,28 +174,30 @@ export function NetworkConnectSection({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setInviteTarget(inviteTarget === peer.url ? null : peer.url)}
-                      style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-                      className="px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold inline-flex items-center gap-1"
-                    >
-                      <Send className="w-3 h-3" />
-                      پیام اتصال
-                    </button>
                     {!peer.isSelf && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRemoteUrlInput(peer.url);
-                          onConnectUrl(peer.url);
-                        }}
-                        style={{ backgroundColor: 'var(--accent)' }}
-                        className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1"
-                      >
-                        <Check className="w-3 h-3" />
-                        اتصال
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setInviteTarget(inviteTarget === peer.url ? null : peer.url)}
+                          style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                          className="px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold inline-flex items-center gap-1"
+                        >
+                          <Send className="w-3 h-3" />
+                          پیام اتصال
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRemoteUrlInput(peer.url);
+                            onConnectUrl(peer.url);
+                          }}
+                          style={{ backgroundColor: 'var(--accent)' }}
+                          className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1"
+                        >
+                          <Check className="w-3 h-3" />
+                          اتصال
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>

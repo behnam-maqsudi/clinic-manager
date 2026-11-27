@@ -210,7 +210,7 @@ app.get('/api/network/discover', async (_req, res) => {
 
 app.post('/api/network/invite', (req, res) => {
   try {
-    const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '' } = req.body || {};
+    const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '' } = req.body || {};
     const senderLabel = String(fromName || '').trim() || 'سیستم همکار در شبکه';
     const cleanUrl = String(fromUrl || '').trim();
     const cleanMsg =
@@ -231,6 +231,7 @@ app.post('/api/network/invite', (req, res) => {
       fromName: senderLabel,
       fromUrl: cleanUrl,
       fromRole,
+      senderClientId: String(senderClientId || ''),
       message: cleanMsg,
       created_at: saved.created_at,
     });
@@ -242,7 +243,14 @@ app.post('/api/network/invite', (req, res) => {
 
 app.post('/api/network/send-invite', async (req, res) => {
   try {
-    const { targetUrl = '', fromName = '', fromUrl = '', fromRole = 'secretary', message = '' } = req.body || {};
+    const {
+      targetUrl = '',
+      fromName = '',
+      fromUrl = '',
+      fromRole = 'secretary',
+      message = '',
+      senderClientId = '',
+    } = req.body || {};
     const cleanTarget = String(targetUrl || '').trim().replace(/\/+$/, '');
     let parsed: URL;
     try {
@@ -265,6 +273,7 @@ app.post('/api/network/send-invite', async (req, res) => {
         fromName: senderName,
         fromUrl: selfUrl,
         fromRole,
+        senderClientId: String(senderClientId || ''),
         message: String(message || '').trim() || `لطفاً به سیستم مطب (${selfUrl}) متصل شوید.`,
       }),
       signal: AbortSignal.timeout(3500),
@@ -280,6 +289,38 @@ app.post('/api/network/send-invite', async (req, res) => {
       message: err instanceof Error ? `عدم دسترسی به سیستم مقصد: ${err.message}` : 'عدم دسترسی به سیستم مقصد.',
     });
   }
+});
+
+// --- Initial Setup & Role PIN Auth ---
+app.get('/api/setup', (_req, res) => {
+  res.json({ ok: true, ...db.getSetupState() });
+});
+
+app.post('/api/setup', (req, res) => {
+  try {
+    const current = db.getSetupState();
+    const { primaryRole = 'doctor', doctorPin = '', currentPin = '' } = req.body || {};
+    if (current.setupCompleted && current.hasDoctorPin && !db.verifyDoctorPin(String(currentPin || ''))) {
+      return res.status(401).json({ ok: false, message: 'برای تغییر تنظیمات اولیه، رمز فعلی پزشک الزامی است.' });
+    }
+    const state = db.completeSetup({
+      primaryRole: primaryRole === 'secretary' ? 'secretary' : 'doctor',
+      doctorPin: String(doctorPin || ''),
+    });
+    broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
+    return res.json({ ok: true, ...state });
+  } catch (err) {
+    return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/auth/verify-pin', (req, res) => {
+  const pin = String(req.body?.pin || '');
+  const valid = db.verifyDoctorPin(pin);
+  if (!valid) {
+    return res.json({ ok: false, valid: false, message: 'رمز عبور پزشک اشتباه است.' });
+  }
+  return res.json({ ok: true, valid: true });
 });
 
 // --- Doctor <-> Secretary Messaging ---

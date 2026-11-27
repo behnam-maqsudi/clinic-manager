@@ -7,6 +7,7 @@ import gregorian_en from 'react-date-object/locales/gregorian_en';
 import type {
   Attachment,
   ClinicMessage,
+  ClinicSetupState,
   GitUpdateStatus,
   Patient,
   PatientInput,
@@ -16,6 +17,7 @@ import type {
 } from '../shared/types';
 import { MessagesModal } from './components/MessagesModal';
 import { NetworkConnectSection } from './components/NetworkConnectSection';
+import { SetupWizardModal } from './components/SetupWizardModal';
 import {
   BellRing,
   Calendar,
@@ -32,6 +34,7 @@ import {
   GitBranch,
   Hourglass,
   ListPlus,
+  Lock,
   MessageSquare,
   Palette,
   Paperclip,
@@ -45,6 +48,7 @@ import {
   Stethoscope,
   Trash2,
   Upload,
+  UserCheck,
   UserPlus,
   Users,
   Wifi,
@@ -140,7 +144,10 @@ function parsePasteLines(raw: string): PatientInput[] {
 }
 
 export default function App() {
-  const [role, setRole] = useState<UserRole>(() => (localStorage.getItem('clinic_role') as UserRole) || 'secretary');
+  const [role, setRole] = useState<UserRole>(() => {
+    const saved = localStorage.getItem('clinic_role');
+    return saved === 'doctor' || saved === 'secretary' ? saved : 'secretary';
+  });
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('clinic_theme') || 'teal');
   const [devMode, setDevMode] = useState<boolean>(() => localStorage.getItem('clinic_dev_mode') === 'true');
 
@@ -158,6 +165,15 @@ export default function App() {
 
   const [messages, setMessages] = useState<ClinicMessage[]>([]);
   const [messagesModalOpen, setMessagesModalOpen] = useState(false);
+
+  const [setupState, setSetupState] = useState<ClinicSetupState>({
+    setupCompleted: true,
+    primaryRole: null,
+    hasDoctorPin: false,
+  });
+  const [roleSwitchPin, setRoleSwitchPin] = useState('');
+  const [roleSwitchError, setRoleSwitchError] = useState('');
+  const [verifyingPin, setVerifyingPin] = useState(false);
 
   // Modals
   const [patientModalOpen, setPatientModalOpen] = useState(false);
@@ -235,6 +251,11 @@ export default function App() {
   roleRef.current = role;
   const messagesModalOpenRef = useRef(messagesModalOpen);
   messagesModalOpenRef.current = messagesModalOpen;
+  const clientIdRef = useRef<string>(
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
   const lookupTimerRef = useRef<number | undefined>(undefined);
   const lookupSeqRef = useRef(0);
   const toastTimerRef = useRef<number | undefined>(undefined);
@@ -259,6 +280,56 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('clinic_dev_mode', String(devMode));
   }, [devMode]);
+
+  useEffect(() => {
+    fetch('/api/setup')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) {
+          setSetupState({
+            setupCompleted: Boolean(data.setupCompleted),
+            primaryRole: data.primaryRole || null,
+            hasDoctorPin: Boolean(data.hasDoctorPin),
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  async function handleProtectedRoleSwitch(targetRole: UserRole) {
+    if (targetRole === role) return;
+    setRoleSwitchError('');
+    if (!setupState.hasDoctorPin) {
+      setRole(targetRole);
+      notify(`نقش سیستم به «${targetRole === 'doctor' ? 'پزشک' : 'منشی'}» تغییر کرد.`);
+      return;
+    }
+    if (!roleSwitchPin.trim()) {
+      setRoleSwitchError('ابتدا رمز عبور پزشک را وارد کنید.');
+      return;
+    }
+    setVerifyingPin(true);
+    try {
+      const res = await fetch('/api/auth/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: roleSwitchPin }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.valid) {
+        setRoleSwitchError(data.message || 'رمز عبور پزشک اشتباه است.');
+        return;
+      }
+      setRole(targetRole);
+      setRoleSwitchPin('');
+      setRoleSwitchError('');
+      notify(`نقش سیستم به «${targetRole === 'doctor' ? 'پزشک' : 'منشی'}» تغییر کرد.`);
+    } catch {
+      setRoleSwitchError('خطا در بررسی رمز عبور');
+    } finally {
+      setVerifyingPin(false);
+    }
+  }
 
   useEffect(() => {
     if (!window.clinicDesktop?.onDownloadProgress) return;
@@ -476,7 +547,15 @@ export default function App() {
     });
     evtSource.addEventListener('connection_invite', (e) => {
       try {
-        const payload = JSON.parse(e.data) as { fromName: string; fromUrl: string; message: string };
+        const payload = JSON.parse(e.data) as {
+          fromName: string;
+          fromUrl: string;
+          senderClientId?: string;
+          message: string;
+        };
+        if (payload.senderClientId && payload.senderClientId === clientIdRef.current) {
+          return;
+        }
         playGentleChime();
         setInviteBanner(payload);
       } catch {}
@@ -900,22 +979,14 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Role Switcher */}
-            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex p-1 rounded-xl border text-xs">
-              <button
-                onClick={() => setRole('secretary')}
-                style={role === 'secretary' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-2.5 sm:px-3 py-1.5 rounded-lg font-semibold transition-all"
-              >
-                منشی
-              </button>
-              <button
-                onClick={() => setRole('doctor')}
-                style={role === 'doctor' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-2.5 sm:px-3 py-1.5 rounded-lg font-semibold transition-all"
-              >
-                پزشک
-              </button>
+            {/* Locked Role Badge */}
+            <div
+              style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)', color: 'var(--accent)' }}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold"
+              title="تغییر نقش فقط از تنظیمات و با رمز عبور امکان‌پذیر است"
+            >
+              {role === 'doctor' ? <Stethoscope className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
+              <span>{role === 'doctor' ? 'پنل پزشک' : 'پنل منشی'}</span>
             </div>
 
             <button
@@ -1798,9 +1869,61 @@ export default function App() {
                 )}
               </div>
 
+              {/* Protected Role Switcher */}
+              <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-2xl border p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                    <h4 className="text-sm font-bold">نقش این سیستم و امنیت</h4>
+                  </div>
+                  <span style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent-soft-text)' }} className="px-2.5 py-0.5 rounded-full text-[11px] font-bold">
+                    نقش فعلی: {role === 'doctor' ? 'پزشک' : 'منشی'}
+                  </span>
+                </div>
+                <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
+                  برای تغییر نقش این سیستم، رمز عبور پزشک را وارد کرده و نقش جدید را انتخاب کنید:
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {setupState.hasDoctorPin && (
+                    <input
+                      type="password"
+                      dir="ltr"
+                      value={roleSwitchPin}
+                      onChange={(e) => {
+                        setRoleSwitchPin(e.target.value);
+                        setRoleSwitchError('');
+                      }}
+                      placeholder="رمز عبور پزشک"
+                      style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                      className="flex-1 min-w-[140px] rounded-xl border px-3 py-2 text-xs font-mono text-left focus:outline-none"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    disabled={verifyingPin || role === 'secretary'}
+                    onClick={() => handleProtectedRoleSwitch('secretary')}
+                    style={{ backgroundColor: role === 'secretary' ? 'var(--accent)' : 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                    className={`px-3 py-2 rounded-xl border text-xs font-semibold ${role === 'secretary' ? 'text-white' : ''} disabled:opacity-60`}
+                  >
+                    تغییر به منشی
+                  </button>
+                  <button
+                    type="button"
+                    disabled={verifyingPin || role === 'doctor'}
+                    onClick={() => handleProtectedRoleSwitch('doctor')}
+                    style={{ backgroundColor: role === 'doctor' ? 'var(--accent)' : 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                    className={`px-3 py-2 rounded-xl border text-xs font-semibold ${role === 'doctor' ? 'text-white' : ''} disabled:opacity-60`}
+                  >
+                    تغییر به پزشک
+                  </button>
+                </div>
+                {roleSwitchError && <p className="text-xs text-rose-600 font-semibold">{roleSwitchError}</p>}
+              </div>
+
               {/* Clinic LAN Discovery, Peer Messaging & Electron Server Connection */}
               <NetworkConnectSection
                 role={role}
+                clientId={clientIdRef.current}
                 isElectron={Boolean(window.clinicDesktop?.isElectron)}
                 remoteUrlInput={remoteUrlInput}
                 setRemoteUrlInput={setRemoteUrlInput}
@@ -2118,6 +2241,16 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Initial Setup Wizard */}
+      <SetupWizardModal
+        open={!setupState.setupCompleted}
+        onComplete={(chosenRole, state) => {
+          setSetupState(state);
+          setRole(chosenRole);
+          notify(`راه‌اندازی اولیه تکمیل شد (${chosenRole === 'doctor' ? 'سیستم پزشک' : 'سیستم منشی'}).`);
+        }}
+      />
 
       {/* Messages Modal (Doctor <-> Secretary) */}
       <MessagesModal
