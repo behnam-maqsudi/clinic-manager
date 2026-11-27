@@ -389,17 +389,35 @@ function openStandaloneWindow(url: string) {
   child.unref();
 }
 
-app.listen(PORT, HOST, () => {
-  const ips = getLanIps();
-  console.log('====================================================');
-  console.log('  Clinic Manager - Dr. Bahamin Jahanian');
-  console.log(`  Local:   http://localhost:${PORT}`);
-  for (const ip of ips) {
-    console.log(`  Network: http://${ip}:${PORT}`);
-  }
-  console.log('====================================================');
+export function startServer(port = PORT): Promise<{ port: number; close: () => void }> {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, HOST, () => {
+      const ips = getLanIps();
+      console.log('====================================================');
+      console.log('  Clinic Manager - Dr. Bahamin Jahanian');
+      console.log(`  Local:   http://localhost:${port}`);
+      for (const ip of ips) {
+        console.log(`  Network: http://${ip}:${port}`);
+      }
+      console.log('====================================================');
 
-  if (process.argv.includes('--open')) {
-    openStandaloneWindow(`http://localhost:${PORT}`);
-  }
-});
+      if (process.argv.includes('--open')) {
+        openStandaloneWindow(`http://localhost:${port}`);
+      }
+
+      resolve({
+        port,
+        close: () => server.close(),
+      });
+    });
+
+    server.on('error', reject);
+  });
+}
+
+if (require.main === module) {
+  startServer(PORT).catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

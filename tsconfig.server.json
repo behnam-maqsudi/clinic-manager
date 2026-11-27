@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/db.ts", "src/git-updater.ts", "src/server.ts", "src/shared/**/*.ts"]
+  "include": ["src/db.ts", "src/git-updater.ts", "src/server.ts", "src/electron/**/*.ts", "src/shared/**/*.ts"]
 }

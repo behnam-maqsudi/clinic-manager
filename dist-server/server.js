@@ -36,6 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.startServer = startServer;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_os_1 = __importDefault(require("node:os"));
 const node_path_1 = __importDefault(require("node:path"));
@@ -392,16 +393,31 @@ function openStandaloneWindow(url) {
     });
     child.unref();
 }
-app.listen(PORT, HOST, () => {
-    const ips = getLanIps();
-    console.log('====================================================');
-    console.log('  Clinic Manager - Dr. Bahamin Jahanian');
-    console.log(`  Local:   http://localhost:${PORT}`);
-    for (const ip of ips) {
-        console.log(`  Network: http://${ip}:${PORT}`);
-    }
-    console.log('====================================================');
-    if (process.argv.includes('--open')) {
-        openStandaloneWindow(`http://localhost:${PORT}`);
-    }
-});
+function startServer(port = PORT) {
+    return new Promise((resolve, reject) => {
+        const server = app.listen(port, HOST, () => {
+            const ips = getLanIps();
+            console.log('====================================================');
+            console.log('  Clinic Manager - Dr. Bahamin Jahanian');
+            console.log(`  Local:   http://localhost:${port}`);
+            for (const ip of ips) {
+                console.log(`  Network: http://${ip}:${port}`);
+            }
+            console.log('====================================================');
+            if (process.argv.includes('--open')) {
+                openStandaloneWindow(`http://localhost:${port}`);
+            }
+            resolve({
+                port,
+                close: () => server.close(),
+            });
+        });
+        server.on('error', reject);
+    });
+}
+if (require.main === module) {
+    startServer(PORT).catch((err) => {
+        console.error('Failed to start server:', err);
+        process.exit(1);
+    });
+}

@@ -1,4 +1,4 @@
-name: Build Clinic Manager Release
+name: Build Desktop Releases (Windows & macOS)
 
 on:
   push:
@@ -9,8 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    runs-on: windows-latest
+  build-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,27 +24,43 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install dependencies and build frontend
+      - name: Install dependencies & build
         run: |
           npm ci
           npm run build
 
-      - name: Prune devDependencies for portable bundle
-        run: npm prune --omit=dev
+      - name: Package Windows executable
+        if: matrix.os == 'windows-latest'
+        run: npx electron-builder --win --publish never
 
-      - name: Package portable Windows bundle
-        shell: pwsh
-        run: |
-          $stage = "clinic-manager-win"
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item -Path "dist-server","public","dist","node_modules","package.json","package-lock.json","install.bat","start.bat","doctor-shortcut.bat","ClinicManager.vbs","README.md" -Destination $stage -Recurse -Force
-          Compress-Archive -Path "$stage\*" -DestinationPath "clinic-manager-windows-prebuilt.zip" -Force
+      - name: Package macOS dmg
+        if: matrix.os == 'macos-latest'
+        run: npx electron-builder --mac --publish never
 
-      - name: Upload Release Asset
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+
+  publish-release:
+    needs: build-desktop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: Clinic Manager v1.0.${{ github.run_number }}
-          files: clinic-manager-windows-prebuilt.zip
+          files: |
+            artifacts/desktop-windows-latest/*.exe
+            artifacts/desktop-macos-latest/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

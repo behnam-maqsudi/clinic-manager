@@ -2,15 +2,43 @@
   "name": "clinic-manager",
   "version": "1.0.0",
   "description": "سیستم مدیریت مراجعه‌کنندگان مطب دکتر بهامین جهانیان با قابلیت آپلود آزمایش از موبایل، شبکه داخلی و بروزرسانی گیت",
-  "main": "dist-server/server.js",
+  "main": "dist-server/electron/main.js",
   "scripts": {
     "start": "node dist-server/server.js",
     "dev": "vite",
+    "electron": "npm run build && electron .",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "build:server": "tsc -p tsconfig.server.json",
     "build:client": "vite build",
     "build": "npm run typecheck && npm run build:server && npm run build:client",
     "test": "playwright test"
+  },
+  "build": {
+    "appId": "com.jahanian.clinicmanager",
+    "productName": "Clinic Manager - Dr Jahanian",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-server/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.medical"
+    }
   },
   "dependencies": {
     "express": "^5.1.0",
@@ -32,6 +60,8 @@
     "@types/react": "^19.3.3",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
     "vite": "^8.4.0"
