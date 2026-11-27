@@ -5,6 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { usePatientsStore } from '../store/usePatientsStore';
 import { subscribeAttachmentsSse } from '../store/useClinicSync';
 import { toPersianDigits } from '../utils/clinicHelpers';
+import { logUiEvent } from '../utils/debugLogger';
 
 interface LabModalProps {
   patientId: number | null;
@@ -54,6 +55,7 @@ export function LabModal({ patientId, onClose }: LabModalProps) {
 
   async function uploadFilesFromPc(files: FileList | null) {
     if (!patientId || !files || files.length === 0) return;
+    logUiEvent('LabModal', 'upload_files', { patientId, count: files.length });
     const formData = new FormData();
     for (const f of files) formData.append('files', f);
     formData.append('title', pcUploadTitle.trim());

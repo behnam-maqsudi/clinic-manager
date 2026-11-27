@@ -34,8 +34,9 @@ export function NetworkConnectSection({
   const [scanning, setScanning] = useState(false);
   const [peers, setPeers] = useState<DiscoveredPeer[] | null>(null);
   const [sendingUrl, setSendingUrl] = useState<string | null>(null);
+  const [forceClientView, setForceClientView] = useState(false);
 
-  const isPrimaryHost = !activeRemoteUrl && setupState.setupCompleted;
+  const isPrimaryHost = !activeRemoteUrl && setupState.setupCompleted && role === 'doctor' && !forceClientView;
   const scanButtonLabel = isPrimaryHost ? 'اضافه کردن سیستم منشی' : 'جستجوی سیستم اصلی';
 
   async function scanNetwork() {
@@ -221,24 +222,46 @@ export function NetworkConnectSection({
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={isSending}
-                      onClick={() => sendConnectionRequest(peer.url)}
-                      style={{ backgroundColor: 'var(--accent)' }}
-                      className="px-3 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-60"
-                    >
-                      <Send className="w-3 h-3" />
-                      {isSending
-                        ? 'در حال ارسال...'
-                        : isPrimaryHost
-                          ? 'دعوت به اتصال'
-                          : 'درخواست اتصال'}
-                    </button>
+                    {!isPeerConnected && (
+                      <button
+                        type="button"
+                        disabled={isSending}
+                        onClick={() => sendConnectionRequest(peer.url)}
+                        style={{ backgroundColor: 'var(--accent)' }}
+                        className="px-3 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <Send className="w-3 h-3" />
+                        {isSending
+                          ? 'در حال ارسال...'
+                          : isPrimaryHost
+                            ? 'دعوت به اتصال'
+                            : 'درخواست اتصال'}
+                      </button>
+                    )}
                   </div>
                 );
               })
           )}
+        </div>
+      )}
+
+      {!activeRemoteUrl && (
+        <div className="pt-1 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setForceClientView((v) => !v);
+              setPeers(null);
+            }}
+            style={{ color: 'var(--text-muted)' }}
+            className="text-[11px] hover:underline"
+          >
+            {isPrimaryHost
+              ? 'این دستگاه سیستم فرعی است؟ اتصال به سیستم اصلی دیگر'
+              : forceClientView
+                ? 'بازگشت به حالت سیستم اصلی'
+                : ''}
+          </button>
         </div>
       )}
     </div>

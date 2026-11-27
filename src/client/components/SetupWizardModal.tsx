@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Lock, Server, ShieldCheck, Wifi } from 'lucide-react';
 import type { ClinicSetupState } from '../../shared/types';
 import { useAppStore } from '../store/useAppStore';
+import { logUiEvent } from '../utils/debugLogger';
 import { NetworkConnectSection } from './NetworkConnectSection';
 
 interface SetupWizardModalProps {
@@ -26,6 +27,7 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
 
   async function handleServerSetup(e: React.FormEvent) {
     e.preventDefault();
+    logUiEvent('SetupWizardModal', 'server_setup_submit');
     setError('');
     const cleanPin = doctorPin.trim();
     if (cleanPin.length < 4) {

@@ -5,6 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { usePatientsStore } from '../store/usePatientsStore';
 import { subscribeAttachmentsSse, subscribePatientsSse } from '../store/useClinicSync';
 import { formatShamsiDate, QUICK_NOTES, STATUS_META, toPersianDigits } from '../utils/clinicHelpers';
+import { logUiEvent } from '../utils/debugLogger';
 
 interface PatientDetailModalProps {
   patient: Patient | null;
@@ -88,6 +89,7 @@ export function PatientDetailModal({ patient, onClose, onEditFull, onOpenLab }: 
 
   async function saveDetailNotes() {
     if (!detailPatient || isSaving) return;
+    logUiEvent('PatientDetailModal', 'save_notes', { patientId: detailPatient.id });
     const sessionId = sessionRef.current;
     setIsSaving(true);
     try {

@@ -13,6 +13,7 @@ import {
   toIsoDateString,
   toPersianDigits,
 } from '../utils/clinicHelpers';
+import { logUiEvent } from '../utils/debugLogger';
 
 interface PatientFormModalProps {
   open: boolean;
@@ -103,6 +104,9 @@ export function PatientFormModal({ open, editingPatient, onClose }: PatientFormM
 
   async function savePatient(e: React.FormEvent) {
     e.preventDefault();
+    logUiEvent('PatientFormModal', editingPatient ? 'update_patient' : 'create_patient', {
+      patientId: editingPatient?.id,
+    });
     const url = editingPatient ? `/api/patients/${editingPatient.id}` : '/api/patients';
     const method = editingPatient ? 'PUT' : 'POST';
     try {
