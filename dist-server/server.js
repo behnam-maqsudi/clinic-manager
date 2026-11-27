@@ -46,6 +46,7 @@ const express_1 = __importDefault(require("express"));
 const multer_1 = __importDefault(require("multer"));
 const qrcode_1 = __importDefault(require("qrcode"));
 const db = __importStar(require("./db"));
+const debugLogger = __importStar(require("./debug-logger"));
 const git_updater_1 = require("./git-updater");
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
@@ -53,12 +54,47 @@ const DIST_DIR = node_path_1.default.join(__dirname, '..', 'dist');
 const PUBLIC_DIR = node_path_1.default.join(__dirname, '..', 'public');
 const app = (0, express_1.default)();
 app.use(express_1.default.json({ limit: '2mb' }));
+app.use((req, res, next) => {
+    if (!debugLogger.isDebugLoggingEnabled() ||
+        req.path.startsWith('/api/dev/logs') ||
+        req.path.startsWith('/assets/') ||
+        req.path === '/icon.svg' ||
+        req.path === '/manifest.webmanifest') {
+        return next();
+    }
+    const start = Date.now();
+    const ip = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
+    res.on('finish', () => {
+        debugLogger.appendDebugLog('HTTP', `[${ip}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`);
+    });
+    next();
+});
 if (node_fs_1.default.existsSync(DIST_DIR)) {
     app.use(express_1.default.static(DIST_DIR));
 }
 app.use(express_1.default.static(PUBLIC_DIR));
 const sseClients = new Set();
+const activeSseByIp = new Map();
+const connectedPeerIps = new Map();
+function normalizeRemoteIp(rawIp) {
+    const ip = String(rawIp || '').replace(/^::ffff:/, '');
+    return ip === '::1' ? '127.0.0.1' : ip;
+}
+function getRemoteConnectedIps() {
+    const selfIps = new Set(['127.0.0.1', ...getLanIps()]);
+    const result = new Set();
+    for (const [ip, count] of activeSseByIp.entries()) {
+        if (count > 0 && !selfIps.has(ip))
+            result.add(ip);
+    }
+    for (const ip of connectedPeerIps.keys()) {
+        if (!selfIps.has(ip))
+            result.add(ip);
+    }
+    return Array.from(result);
+}
 function broadcastEvent(event, data = {}) {
+    debugLogger.appendDebugLog('SSE_BROADCAST', event, data);
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) {
         try {
@@ -152,8 +188,12 @@ app.get('/api/events', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
-    res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+    const clientIp = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
+    activeSseByIp.set(clientIp, (activeSseByIp.get(clientIp) || 0) + 1);
+    debugLogger.appendDebugLog('SSE_CONNECT', `Client connected from ${clientIp}`, { remoteIps: getRemoteConnectedIps() });
+    res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, connectedIps: getRemoteConnectedIps() })}\n\n`);
     sseClients.add(res);
+    broadcastEvent('peers_changed', { connectedIps: getRemoteConnectedIps() });
     const heartbeat = setInterval(() => {
         try {
             res.write(': ping\n\n');
@@ -166,6 +206,15 @@ app.get('/api/events', (req, res) => {
     req.on('close', () => {
         clearInterval(heartbeat);
         sseClients.delete(res);
+        const nextCount = Math.max(0, (activeSseByIp.get(clientIp) || 1) - 1);
+        if (nextCount === 0) {
+            activeSseByIp.delete(clientIp);
+        }
+        else {
+            activeSseByIp.set(clientIp, nextCount);
+        }
+        debugLogger.appendDebugLog('SSE_DISCONNECT', `Client disconnected from ${clientIp}`, { remoteIps: getRemoteConnectedIps() });
+        broadcastEvent('peers_changed', { connectedIps: getRemoteConnectedIps() });
     });
 });
 // --- Health & Network Info ---
@@ -217,6 +266,7 @@ app.get('/api/network/discover', async (_req, res) => {
                     clinic: data.clinic,
                     hostname: data.hostname || ip,
                     isSetupCompleted: Boolean(data.isSetupCompleted),
+                    isConnected: connectedPeerIps.has(ip) || (activeSseByIp.get(ip) || 0) > 0,
                     port: Number(data.port) || PORT,
                     isSelf: selfIpSet.has(ip),
                 };
@@ -235,17 +285,19 @@ app.get('/api/network/discover', async (_req, res) => {
 });
 app.post('/api/network/invite', (req, res) => {
     try {
-        const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '' } = req.body || {};
+        const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '', requestType = 'host_invite', } = req.body || {};
         const senderLabel = String(fromName || '').trim() || 'سیستم همکار در شبکه';
         const cleanUrl = String(fromUrl || '').trim();
         const cleanMsg = String(message || '').trim() ||
-            `درخواست اتصال از طرف «${senderLabel}»${cleanUrl ? ` (${cleanUrl})` : ''}`;
+            (requestType === 'join_request'
+                ? `دستگاه «${senderLabel}» درخواست اتصال به سیستم اصلی را دارد.`
+                : `دعوت اتصال از طرف «${senderLabel}»`);
         const saved = db.createMessage({
             sender_role: fromRole === 'doctor' ? 'doctor' : 'secretary',
             recipient_role: 'all',
             body: cleanMsg,
             kind: 'connection_invite',
-            meta: { fromName: senderLabel, fromUrl: cleanUrl },
+            meta: { fromName: senderLabel, fromUrl: cleanUrl, requestType },
         });
         broadcastEvent('new_message', saved);
         broadcastEvent('connection_invite', {
@@ -253,6 +305,7 @@ app.post('/api/network/invite', (req, res) => {
             fromName: senderLabel,
             fromUrl: cleanUrl,
             fromRole,
+            requestType,
             senderClientId: String(senderClientId || ''),
             message: cleanMsg,
             created_at: saved.created_at,
@@ -265,7 +318,7 @@ app.post('/api/network/invite', (req, res) => {
 });
 app.post('/api/network/send-invite', async (req, res) => {
     try {
-        const { targetUrl = '', fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '', } = req.body || {};
+        const { targetUrl = '', fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '', requestType = 'host_invite', } = req.body || {};
         const cleanTarget = String(targetUrl || '').trim().replace(/\/+$/, '');
         let parsed;
         try {
@@ -287,8 +340,9 @@ app.post('/api/network/send-invite', async (req, res) => {
                 fromName: senderName,
                 fromUrl: selfUrl,
                 fromRole,
+                requestType,
                 senderClientId: String(senderClientId || ''),
-                message: String(message || '').trim() || `لطفاً به سیستم مطب (${selfUrl}) متصل شوید.`,
+                message: String(message || '').trim(),
             }),
             signal: AbortSignal.timeout(3500),
         });
@@ -303,6 +357,34 @@ app.post('/api/network/send-invite', async (req, res) => {
             message: err instanceof Error ? `عدم دسترسی به سیستم مقصد: ${err.message}` : 'عدم دسترسی به سیستم مقصد.',
         });
     }
+});
+app.post('/api/network/peer-connected', (req, res) => {
+    const ip = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
+    const hostname = String(req.body?.hostname || '').trim() || ip || 'سیستم فرعی';
+    if (ip) {
+        connectedPeerIps.set(ip, { hostname, connectedAt: new Date().toISOString() });
+    }
+    debugLogger.appendDebugLog('PEER_CONNECTED', `${hostname} (${ip})`, { connectedIps: getRemoteConnectedIps() });
+    broadcastEvent('peer_connected', { ip, hostname, connectedIps: getRemoteConnectedIps() });
+    broadcastEvent('peers_changed', { connectedIps: getRemoteConnectedIps() });
+    return res.json({ ok: true });
+});
+app.post('/api/network/notify-accepted', async (req, res) => {
+    const rawTarget = String(req.body?.targetUrl || '').trim().replace(/\/+$/, '');
+    try {
+        const parsed = new URL(rawTarget);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return res.status(400).json({ ok: false });
+        }
+        await fetch(`${rawTarget}/api/network/peer-connected`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hostname: node_os_1.default.hostname() }),
+            signal: AbortSignal.timeout(1500),
+        });
+    }
+    catch { }
+    return res.json({ ok: true });
 });
 // --- Initial Setup & Role PIN Auth ---
 app.get('/api/setup', (_req, res) => {
@@ -380,6 +462,32 @@ app.post('/api/dev/factory-reset', (req, res) => {
     broadcastEvent('patients_changed', { action: 'factory_reset' });
     broadcastEvent('setup_changed', state);
     return res.json({ ok: true, ...state });
+});
+// --- Debug File Logging ---
+app.get('/api/dev/logs/status', (_req, res) => {
+    return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
+});
+app.post('/api/dev/logs/toggle', (req, res) => {
+    const next = Boolean(req.body?.enabled);
+    debugLogger.setDebugLoggingEnabled(next);
+    return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
+});
+app.post('/api/dev/logs/append', (req, res) => {
+    const source = String(req.body?.source || 'CLIENT');
+    const message = String(req.body?.message || '');
+    if (message) {
+        debugLogger.appendDebugLog(source, message, req.body?.meta);
+    }
+    return res.json({ ok: true });
+});
+app.post('/api/dev/logs/clear', (_req, res) => {
+    debugLogger.clearDebugLogs();
+    return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
+});
+app.get('/api/dev/logs/download', (_req, res) => {
+    const logPath = debugLogger.getDebugLogPath();
+    const stamp = new Date().toISOString().slice(0, 10);
+    return res.download(logPath, `clinic-debug-${stamp}.log`);
 });
 // --- Doctor <-> Secretary Messaging ---
 app.get('/api/messages', (req, res) => {

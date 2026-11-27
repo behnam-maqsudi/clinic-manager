@@ -1,10 +1,11 @@
-import React from 'react';
-import { Sparkles } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Download, FileText, Sparkles, Trash2 } from 'lucide-react';
 import type { Patient } from '../../../shared/types';
 import { useAppStore } from '../../store/useAppStore';
 import { usePatientsStore } from '../../store/usePatientsStore';
 import { useMessagesStore } from '../../store/useMessagesStore';
 import { getTodayIso, toPersianDigits } from '../../utils/clinicHelpers';
+import { setClientDebugLogging } from '../../utils/debugLogger';
 
 export function DevToolsPanel({ onClose }: { onClose?: () => void }) {
   const role = useAppStore((s) => s.role);
@@ -21,6 +22,66 @@ export function DevToolsPanel({ onClose }: { onClose?: () => void }) {
 
   const fetchPatients = usePatientsStore((s) => s.fetchPatients);
   const fetchMessages = useMessagesStore((s) => s.fetchMessages);
+
+  const [logStatus, setLogStatus] = useState({ enabled: false, sizeBytes: 0, lineCount: 0 });
+
+  async function refreshLogStatus() {
+    try {
+      const res = await fetch('/api/dev/logs/status');
+      const data = await res.json();
+      if (data.ok) {
+        setLogStatus({
+          enabled: Boolean(data.enabled),
+          sizeBytes: Number(data.sizeBytes) || 0,
+          lineCount: Number(data.lineCount) || 0,
+        });
+        setClientDebugLogging(Boolean(data.enabled));
+      }
+    } catch {}
+  }
+
+  useEffect(() => {
+    refreshLogStatus();
+  }, []);
+
+  async function toggleLogging() {
+    try {
+      const res = await fetch('/api/dev/logs/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !logStatus.enabled }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setLogStatus({
+          enabled: Boolean(data.enabled),
+          sizeBytes: Number(data.sizeBytes) || 0,
+          lineCount: Number(data.lineCount) || 0,
+        });
+        setClientDebugLogging(Boolean(data.enabled));
+        notify(data.enabled ? 'ثبت لاگ کامل فعال شد.' : 'ثبت لاگ متوقف شد.');
+      }
+    } catch {
+      notify('خطا در تغییر وضعیت لاگ');
+    }
+  }
+
+  async function clearLogs() {
+    try {
+      const res = await fetch('/api/dev/logs/clear', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        setLogStatus({
+          enabled: Boolean(data.enabled),
+          sizeBytes: Number(data.sizeBytes) || 0,
+          lineCount: Number(data.lineCount) || 0,
+        });
+        notify('فایل لاگ پاک شد.');
+      }
+    } catch {
+      notify('خطا در پاک کردن لاگ‌ها');
+    }
+  }
 
   async function seedSamplePatients() {
     const samples = [
@@ -205,6 +266,47 @@ export function DevToolsPanel({ onClose }: { onClose?: () => void }) {
         <button onClick={() => resetToDayOne(true)} className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold">
           ریست کامل کارخانه (پاک کردن همه چیز)
         </button>
+      </div>
+
+      {/* Diagnostic File Logger */}
+      <div className="pt-2 border-t border-violet-200/50 space-y-2">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="font-bold text-slate-700 flex items-center gap-1">
+            <FileText className="w-3.5 h-3.5" />
+            ثبت لاگ خطاها و شبکه در فایل
+          </span>
+          <span className="text-slate-500 tabular-nums">
+            {toPersianDigits(logStatus.lineCount)} خط
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={toggleLogging}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${
+              logStatus.enabled
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : 'bg-white text-slate-800 border'
+            }`}
+          >
+            {logStatus.enabled ? 'ثبت لاگ فعال است (توقف)' : 'شروع ثبت لاگ'}
+          </button>
+          <a
+            href="/api/dev/logs/download"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold inline-flex items-center gap-1"
+          >
+            <Download className="w-3.5 h-3.5" />
+            دانلود فایل لاگ
+          </a>
+          <button
+            type="button"
+            onClick={clearLogs}
+            className="px-3 py-1.5 rounded-xl bg-white text-rose-600 border border-rose-200 text-xs font-semibold inline-flex items-center gap-1"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            پاک کردن لاگ‌ها
+          </button>
+        </div>
       </div>
     </div>
   );

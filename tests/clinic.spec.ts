@@ -16,6 +16,9 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     page.on('console', (msg) => {
       if (msg.type() === 'error') errors.push(msg.text());
     });
+    page.on('response', (res) => {
+      if (res.status() >= 500) errors.push(`HTTP ${res.status()} ${res.url()}`);
+    });
 
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'مطب دکتر بهامین جهانیان' })).toBeVisible();
@@ -176,8 +179,8 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     // 6.6. LAN Discovery & Backup/Import tab in Settings + incoming connection invite banner via SSE
     await page.getByRole('button', { name: 'تنظیمات' }).click();
     await page.getByRole('button', { name: 'شبکه و اتصال' }).click();
-    await page.getByRole('button', { name: /جستجوی سیستم اصلی|جستجوی دستگاه‌ها/ }).click();
-    await expect(page.getByRole('button', { name: /جستجوی سیستم اصلی|جستجوی دستگاه‌ها/ })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: /اضافه کردن سیستم منشی|جستجوی سیستم اصلی/ }).click();
+    await expect(page.getByRole('button', { name: /اضافه کردن سیستم منشی|جستجوی سیستم اصلی/ })).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'بکاپ و دیتابیس' }).click();
     await expect(page.getByText('ایمپورت و بازیابی دیتابیس')).toBeVisible();

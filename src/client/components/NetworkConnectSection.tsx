@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { Check, Loader2, Radar, Send, Wifi, WifiOff } from 'lucide-react';
+import { Loader2, Radar, Send, Wifi, WifiOff } from 'lucide-react';
 import type { DiscoveredPeer, UserRole } from '../../shared/types';
 import { useAppStore } from '../store/useAppStore';
+import { toPersianDigits } from '../utils/clinicHelpers';
+import { sendClientLog } from '../utils/debugLogger';
 
 interface NetworkConnectSectionProps {
   role: UserRole;
@@ -19,26 +21,22 @@ export function NetworkConnectSection({
   role,
   clientId,
   isElectron,
-  remoteUrlInput,
-  setRemoteUrlInput,
   activeRemoteUrl,
-  onConnectUrl,
   onDisconnectRemote,
   notify,
 }: NetworkConnectSectionProps) {
   const devMode = useAppStore((s) => s.devMode);
+  const setupState = useAppStore((s) => s.setupState);
+  const connectedPeerIps = useAppStore((s) => s.connectedPeerIps);
   const devNetworkOffline = useAppStore((s) => s.devNetworkOffline);
   const setDevNetworkOffline = useAppStore((s) => s.setDevNetworkOffline);
 
   const [scanning, setScanning] = useState(false);
   const [peers, setPeers] = useState<DiscoveredPeer[] | null>(null);
-  const [inviteTarget, setInviteTarget] = useState<string | null>(null);
-  const [inviteNote, setInviteNote] = useState('');
-  const [sendingInvite, setSendingInvite] = useState(false);
-  const [showManualInput, setShowManualInput] = useState(false);
+  const [sendingUrl, setSendingUrl] = useState<string | null>(null);
 
-  const isPrimaryHost = !activeRemoteUrl && role === 'doctor';
-  const scanButtonLabel = isPrimaryHost ? 'جستجوی دستگاه‌ها' : 'جستجوی سیستم اصلی';
+  const isPrimaryHost = !activeRemoteUrl && setupState.setupCompleted;
+  const scanButtonLabel = isPrimaryHost ? 'اضافه کردن سیستم منشی' : 'جستجوی سیستم اصلی';
 
   async function scanNetwork() {
     if (scanning) return;
@@ -48,11 +46,13 @@ export function NetworkConnectSection({
       return;
     }
     setScanning(true);
+    sendClientLog('NETWORK_UI', 'scanNetwork started', { isPrimaryHost });
     try {
       const res = await fetch('/api/network/discover');
       const data = await res.json();
       if (res.ok && data.ok) {
         setPeers(data.peers || []);
+        sendClientLog('NETWORK_UI', 'scanNetwork result', { count: (data.peers || []).length, peers: data.peers });
         if ((data.peers || []).length === 0) {
           notify('دستگاه دیگری روی شبکه پیدا نشد.');
         }
@@ -66,9 +66,13 @@ export function NetworkConnectSection({
     }
   }
 
-  async function sendConnectionInvite(peerUrl: string) {
-    if (sendingInvite) return;
-    setSendingInvite(true);
+  async function sendConnectionRequest(peerUrl: string) {
+    if (sendingUrl) return;
+    setSendingUrl(peerUrl);
+    const requestType = isPrimaryHost ? 'host_invite' : 'join_request';
+    const message = isPrimaryHost
+      ? 'دعوت اتصال از طرف سیستم اصلی مطب'
+      : 'درخواست اتصال از طرف سیستم منشی';
     try {
       const res = await fetch('/api/network/send-invite', {
         method: 'POST',
@@ -77,21 +81,20 @@ export function NetworkConnectSection({
           targetUrl: peerUrl,
           fromRole: role,
           senderClientId: clientId,
-          message: inviteNote.trim() || 'دعوت به اتصال به سیستم اصلی مطب',
+          requestType,
+          message,
         }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        notify('دعوت اتصال ارسال شد.');
-        setInviteTarget(null);
-        setInviteNote('');
+        notify(isPrimaryHost ? 'دعوت اتصال ارسال شد.' : 'درخواست اتصال به سیستم اصلی ارسال شد. منتظر تأیید بمانید.');
       } else {
-        notify(data.message || 'خطا در ارسال دعوت اتصال');
+        notify(data.message || 'خطا در ارسال درخواست اتصال');
       }
     } catch {
       notify('عدم دسترسی به دستگاه مقصد');
     } finally {
-      setSendingInvite(false);
+      setSendingUrl(null);
     }
   }
 
@@ -149,17 +152,28 @@ export function NetworkConnectSection({
           <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full">
             متصل به سیستم اصلی مطب
           </span>
+        ) : isPrimaryHost ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold" style={{ color: 'var(--accent)' }}>
+              این دستگاه سیستم اصلی مطب است
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold tabular-nums">
+              {connectedPeerIps.length > 0
+                ? `${toPersianDigits(connectedPeerIps.length)} دستگاه متصل`
+                : 'بدون دستگاه متصل'}
+            </span>
+          </div>
         ) : (
           <span className="font-bold" style={{ color: 'var(--accent)' }}>
-            {isPrimaryHost ? 'این دستگاه سیستم اصلی مطب است' : 'آماده اتصال به سیستم اصلی'}
+            آماده اتصال به سیستم اصلی
           </span>
         )}
       </div>
 
       <p style={{ color: 'var(--text-muted)' }} className="text-[11px] leading-5">
         {isPrimaryHost
-          ? 'برای وصل کردن کامپیوتر منشی به این سیستم، دکمه «جستجوی دستگاه‌ها» را بزنید و روی «دعوت به اتصال» کلیک کنید.'
-          : 'برای وصل شدن به سیستم اصلی مطب، دکمه «جستجوی سیستم اصلی» را بزنید و دستگاه پزشک را انتخاب کنید.'}
+          ? 'این دستگاه سیستم اصلی مطب است. برای اضافه کردن سیستم منشی یا دستگاه جدید، دکمه «اضافه کردن سیستم منشی» را بزنید.'
+          : 'برای وصل شدن به سیستم اصلی مطب، دکمه «جستجوی سیستم اصلی» را بزنید و درخواست اتصال بفرستید تا سیستم پزشک آن را تأیید کند.'}
       </p>
 
       {isElectron && activeRemoteUrl && (
@@ -174,133 +188,56 @@ export function NetworkConnectSection({
         </div>
       )}
 
-      {isElectron && !isPrimaryHost && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowManualInput((v) => !v)}
-            style={{ color: 'var(--text-muted)' }}
-            className="text-[11px] hover:underline"
-          >
-            {showManualInput ? 'بستن ورود دستی آدرس' : 'ورود دستی آدرس (پیشرفته)'}
-          </button>
-          {(showManualInput || devMode) && (
-            <div className="flex flex-wrap gap-2 mt-2">
-              <input
-                type="text"
-                dir="ltr"
-                value={remoteUrlInput}
-                onChange={(e) => setRemoteUrlInput(e.target.value)}
-                placeholder="http://192.168.8.7:3000"
-                style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-                className="flex-1 min-w-[180px] rounded-xl border px-3 py-2 text-xs font-mono text-left focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => onConnectUrl(remoteUrlInput)}
-                style={{ backgroundColor: 'var(--accent)' }}
-                className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
-              >
-                اتصال به سیستم اصلی
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
       {peers !== null && (
         <div className="space-y-2 pt-1">
-          {peers.filter((p) => !p.isSelf || devMode).length === 0 ? (
+          {peers.filter((p) => !p.isSelf).length === 0 ? (
             <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
               هیچ دستگاه دیگری در شبکه پیدا نشد. مطمئن شوید هر دو دستگاه به یک وای‌فای وصل هستند.
             </p>
           ) : (
             peers
-              .filter((p) => !p.isSelf || devMode)
-              .map((peer) => (
-                <div
-                  key={peer.url}
-                  style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-                  className="rounded-xl border p-2.5 space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-bold truncate">{peer.hostname}</span>
-                        <span
-                          className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
-                            peer.isSetupCompleted
+              .filter((p) => !p.isSelf)
+              .map((peer) => {
+                const isPeerConnected = Boolean(peer.isConnected || connectedPeerIps.includes(peer.ip));
+                const isSending = sendingUrl === peer.url;
+                return (
+                  <div
+                    key={peer.url}
+                    style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                    className="rounded-xl border p-2.5 flex items-center justify-between gap-2 flex-wrap"
+                  >
+                    <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold truncate">{peer.hostname}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                          isPeerConnected
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            : peer.isSetupCompleted
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : 'bg-sky-50 text-sky-700 border border-sky-200'
-                          }`}
-                        >
-                          {peer.isSetupCompleted ? 'سیستم اصلی' : 'آماده اتصال'}
-                        </span>
-                        {peer.isSelf && (
-                          <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-semibold">
-                            این دستگاه
-                          </span>
-                        )}
-                      </div>
-                      {devMode && (
-                        <code className="text-[11px] font-mono" style={{ color: 'var(--accent)' }} dir="ltr">
-                          {peer.url}
-                        </code>
-                      )}
-                    </div>
-
-                    {!peer.isSelf && (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setInviteTarget(inviteTarget === peer.url ? null : peer.url)}
-                          style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-                          className="px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold inline-flex items-center gap-1"
-                        >
-                          <Send className="w-3 h-3" />
-                          دعوت به اتصال
-                        </button>
-                        {!isPrimaryHost && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRemoteUrlInput(peer.url);
-                              onConnectUrl(peer.url);
-                            }}
-                            style={{ backgroundColor: 'var(--accent)' }}
-                            className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1"
-                          >
-                            <Check className="w-3 h-3" />
-                            اتصال
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {inviteTarget === peer.url && (
-                    <div className="flex items-center gap-1.5 pt-1">
-                      <input
-                        type="text"
-                        value={inviteNote}
-                        onChange={(e) => setInviteNote(e.target.value)}
-                        placeholder="پیام کوتاه (اختیاری)..."
-                        style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-                        className="flex-1 rounded-lg border px-2.5 py-1.5 text-xs focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        disabled={sendingInvite}
-                        onClick={() => sendConnectionInvite(peer.url)}
-                        style={{ backgroundColor: 'var(--accent)' }}
-                        className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold disabled:opacity-50"
+                        }`}
                       >
-                        {sendingInvite ? '...' : 'ارسال دعوت'}
-                      </button>
+                        {isPeerConnected ? 'متصل شد ✓' : peer.isSetupCompleted ? 'سیستم اصلی' : 'آماده اتصال'}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))
+
+                    <button
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => sendConnectionRequest(peer.url)}
+                      style={{ backgroundColor: 'var(--accent)' }}
+                      className="px-3 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-60"
+                    >
+                      <Send className="w-3 h-3" />
+                      {isSending
+                        ? 'در حال ارسال...'
+                        : isPrimaryHost
+                          ? 'دعوت به اتصال'
+                          : 'درخواست اتصال'}
+                    </button>
+                  </div>
+                );
+              })
           )}
         </div>
       )}

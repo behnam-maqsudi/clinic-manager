@@ -48,6 +48,7 @@ node_fs_1.default.mkdirSync(exports.UPLOADS_DIR, { recursive: true });
 function initSchema(database) {
     database.exec(`
     PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 3000;
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS patients (

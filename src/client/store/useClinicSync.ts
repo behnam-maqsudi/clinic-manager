@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { ClinicMessage } from '../../shared/types';
 import { playGentleChime, toPersianDigits } from '../utils/clinicHelpers';
+import { sendClientLog, setClientDebugLogging } from '../utils/debugLogger';
 import { type InviteBannerData, useAppStore } from './useAppStore';
 import { usePatientsStore } from './usePatientsStore';
 import { useMessagesStore } from './useMessagesStore';
@@ -30,6 +31,12 @@ export function useClinicSync(): void {
 
   useEffect(() => {
     loadSetupState();
+    fetch('/api/dev/logs/status')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) setClientDebugLogging(Boolean(data.enabled));
+      })
+      .catch(() => {});
   }, [loadSetupState]);
 
   useEffect(() => {
@@ -48,10 +55,26 @@ export function useClinicSync(): void {
   useEffect(() => {
     const evtSource = new EventSource('/api/events');
 
-    evtSource.addEventListener('connected', () => {
+    evtSource.addEventListener('connected', (e) => {
       useAppStore.getState().setSseConnected(true);
+      try {
+        const data = JSON.parse((e as MessageEvent).data) as { connectedIps?: string[] };
+        if (Array.isArray(data.connectedIps)) {
+          useAppStore.getState().setConnectedPeerIps(data.connectedIps);
+        }
+      } catch {}
       usePatientsStore.getState().fetchPatients();
       useMessagesStore.getState().fetchMessages();
+    });
+
+    evtSource.addEventListener('peers_changed', (e) => {
+      try {
+        const data = JSON.parse(e.data) as { connectedIps?: string[] };
+        if (Array.isArray(data.connectedIps)) {
+          useAppStore.getState().setConnectedPeerIps(data.connectedIps);
+          sendClientLog('CLIENT_SSE', 'peers_changed', { connectedIps: data.connectedIps });
+        }
+      } catch {}
     });
 
     evtSource.addEventListener('patients_changed', () => {
@@ -103,12 +126,28 @@ export function useClinicSync(): void {
     evtSource.addEventListener('connection_invite', (e) => {
       try {
         const payload = JSON.parse(e.data) as InviteBannerData & { senderClientId?: string };
-        const { clientId, setInviteBanner } = useAppStore.getState();
+        const { clientId, setInviteBanner, connectToRemoteUrl, notify } = useAppStore.getState();
+        sendClientLog('CLIENT_SSE', 'connection_invite', payload);
         if (payload.senderClientId && payload.senderClientId === clientId) {
+          return;
+        }
+        if (payload.requestType === 'approved' && payload.fromUrl) {
+          notify('درخواست اتصال توسط پزشک تأیید شد! در حال اتصال...');
+          connectToRemoteUrl(payload.fromUrl);
           return;
         }
         playGentleChime();
         setInviteBanner(payload);
+      } catch {}
+    });
+
+    evtSource.addEventListener('peer_connected', (e) => {
+      try {
+        const payload = JSON.parse(e.data) as { ip?: string; hostname?: string };
+        const { addConnectedPeerIp, triggerCallAlert } = useAppStore.getState();
+        sendClientLog('CLIENT_SSE', 'peer_connected', payload);
+        if (payload.ip) addConnectedPeerIp(payload.ip);
+        triggerCallAlert(`دستگاه «${payload.hostname || 'سیستم فرعی'}» دعوت را پذیرفت و به سیستم اصلی متصل شد.`);
       } catch {}
     });
 

@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import type { ClinicSetupState, UserRole } from '../../shared/types';
 import { playGentleChime, THEMES } from '../utils/clinicHelpers';
+import { sendClientLog } from '../utils/debugLogger';
 
 export interface InviteBannerData {
   fromName: string;
   fromUrl: string;
   message: string;
+  requestType?: 'host_invite' | 'join_request' | 'approved';
 }
 
 interface AppState {
@@ -21,6 +23,7 @@ interface AppState {
   toast: string;
   callBanner: string;
   inviteBanner: InviteBannerData | null;
+  connectedPeerIps: string[];
   devNetworkOffline: boolean;
 
   setRole: (role: UserRole) => void;
@@ -34,6 +37,8 @@ interface AppState {
   setSseConnected: (connected: boolean) => void;
   setCallBanner: (msg: string) => void;
   setInviteBanner: (banner: InviteBannerData | null) => void;
+  setConnectedPeerIps: (ips: string[]) => void;
+  addConnectedPeerIp: (ip: string) => void;
   notify: (msg: string) => void;
   triggerCallAlert: (msg: string) => void;
   connectToRemoteUrl: (rawUrl: string) => void;
@@ -68,6 +73,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toast: '',
   callBanner: '',
   inviteBanner: null,
+  connectedPeerIps: [],
   devNetworkOffline: false,
 
   setRole: (role) => {
@@ -97,12 +103,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       localStorage.removeItem('clinic_doctor_token');
     }
+    sendClientLog('STATE', 'loginSuccess', { role, hasToken: Boolean(doctorToken) });
     set({ role, isAuthenticated: true, doctorToken: role === 'doctor' ? doctorToken : '' });
   },
 
   logout: () => {
     localStorage.removeItem('clinic_logged_in');
     localStorage.removeItem('clinic_doctor_token');
+    sendClientLog('STATE', 'logout');
     set({ isAuthenticated: false, doctorToken: '' });
   },
 
@@ -123,6 +131,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSseConnected: (sseConnected) => set({ sseConnected }),
   setCallBanner: (callBanner) => set({ callBanner }),
   setInviteBanner: (inviteBanner) => set({ inviteBanner }),
+  setConnectedPeerIps: (connectedPeerIps) => set({ connectedPeerIps }),
+  addConnectedPeerIp: (ip) =>
+    set((s) => (ip && !s.connectedPeerIps.includes(ip) ? { connectedPeerIps: [...s.connectedPeerIps, ip] } : s)),
 
   notify: (msg) => {
     set({ toast: msg });
@@ -137,16 +148,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     callTimer = window.setTimeout(() => set({ callBanner: '' }), 6000);
   },
 
-  connectToRemoteUrl: (rawUrl) => {
+  connectToRemoteUrl: async (rawUrl) => {
     const raw = rawUrl.trim();
     if (!raw) return;
     const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    try {
+      await fetch('/api/network/notify-accepted', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUrl: normalized }),
+      });
+    } catch {}
     if (window.clinicDesktop?.isElectron) {
       window.clinicDesktop.setRemoteUrl(normalized);
     } else {
       navigator.clipboard?.writeText(normalized).catch(() => {});
       window.open(normalized, '_blank', 'noopener,noreferrer');
-      get().notify(`آدرس سرور (${normalized}) باز و کپی شد.`);
+      get().notify('به سیستم اصلی مطب متصل شدید.');
     }
   },
 
@@ -159,11 +177,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadSetupState: async () => {
-    if (window.clinicDesktop?.isElectron) {
+    const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalHost && window.clinicDesktop?.isElectron) {
       window.clinicDesktop
         .getRemoteUrl()
         .then((u) => set({ remoteHostUrl: u || '' }))
         .catch(() => {});
+    } else {
+      set({ remoteHostUrl: '' });
     }
     try {
       const res = await fetch('/api/setup');

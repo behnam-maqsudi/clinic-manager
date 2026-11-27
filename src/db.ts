@@ -30,6 +30,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 function initSchema(database: DatabaseSync) {
   database.exec(`
     PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 3000;
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS patients (

@@ -102,6 +102,7 @@ export interface DiscoveredPeer {
   clinic: string;
   hostname: string;
   isSetupCompleted?: boolean;
+  isConnected?: boolean;
   port: number;
   isSelf: boolean;
 }

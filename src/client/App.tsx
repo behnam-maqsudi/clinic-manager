@@ -49,6 +49,7 @@ export default function App() {
   const setupState = useAppStore((s) => s.setupState);
   const setSetupState = useAppStore((s) => s.setSetupState);
   const remoteHostUrl = useAppStore((s) => s.remoteHostUrl);
+  const connectedPeerIps = useAppStore((s) => s.connectedPeerIps);
   const sseConnected = useAppStore((s) => s.sseConnected);
   const toast = useAppStore((s) => s.toast);
   const notify = useAppStore((s) => s.notify);
@@ -191,7 +192,11 @@ export default function App() {
                       : 'bg-teal-50 text-teal-700 border-teal-200'
                   }`}
                 >
-                  {remoteHostUrl ? 'سیستم فرعی' : 'سیستم اصلی'}
+                  {remoteHostUrl
+                    ? 'سیستم فرعی'
+                    : connectedPeerIps.length > 0
+                      ? `سیستم اصلی • ${toPersianDigits(connectedPeerIps.length)} متصل`
+                      : 'سیستم اصلی'}
                 </span>
                 {devMode && (
                   <button onClick={() => setSettingsModalOpen(true)} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-200">
@@ -585,17 +590,45 @@ export default function App() {
             <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-0.5">{inviteBanner.message}</p>
           </div>
           {inviteBanner.fromUrl && (
-            <button
-              type="button"
-              onClick={() => {
-                connectToRemoteUrl(inviteBanner.fromUrl);
-                setInviteBanner(null);
-              }}
-              style={{ backgroundColor: 'var(--accent)' }}
-              className="px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
-            >
-              اتصال به این سیستم
-            </button>
+            inviteBanner.requestType === 'join_request' ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await fetch('/api/network/send-invite', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        targetUrl: inviteBanner.fromUrl,
+                        fromRole: role,
+                        requestType: 'approved',
+                        message: 'درخواست اتصال شما تأیید شد.',
+                      }),
+                    });
+                    notify(`اتصال «${inviteBanner.fromName}» تأیید شد.`);
+                  } catch {
+                    notify('خطا در ارسال تأیید به دستگاه مقابل');
+                  }
+                  setInviteBanner(null);
+                }}
+                style={{ backgroundColor: 'var(--accent)' }}
+                className="px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
+              >
+                تأیید و اجازه اتصال
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  connectToRemoteUrl(inviteBanner.fromUrl);
+                  setInviteBanner(null);
+                }}
+                style={{ backgroundColor: 'var(--accent)' }}
+                className="px-3 py-1.5 rounded-xl text-white text-xs font-semibold"
+              >
+                اتصال به سیستم اصلی
+              </button>
+            )
           )}
           <button
             type="button"
