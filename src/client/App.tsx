@@ -733,9 +733,7 @@ export default function App() {
                     <th className="py-3.5 px-4">نام و شماره پرونده</th>
                     <th className="py-3.5 px-4">شماره تماس</th>
                     <th className="py-3.5 px-4">کد ملی</th>
-                    <th className="py-3.5 px-4">تاریخ شمسی</th>
                     <th className="py-3.5 px-4">وضعیت</th>
-                    <th className="py-3.5 px-4">یادداشت</th>
                     <th className="py-3.5 px-4 text-left">عملیات</th>
                   </tr>
                 </thead>
@@ -778,15 +776,11 @@ export default function App() {
                         </td>
                         <td className="py-3.5 px-4 font-mono text-xs tabular-nums" dir="ltr">{p.phone || '—'}</td>
                         <td className="py-3.5 px-4 font-mono text-xs tabular-nums" dir="ltr">{p.national_id || '—'}</td>
-                        <td className="py-3.5 px-4 text-xs tabular-nums">{formatShamsiDate(p.visit_date)}</td>
                         <td className="py-3.5 px-4">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${st.badge}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                             {st.label}
                           </span>
-                        </td>
-                        <td style={{ color: 'var(--text-muted)' }} className="py-3.5 px-4 text-xs max-w-[180px] truncate" title={p.notes}>
-                          {p.notes || '—'}
                         </td>
                         <td className="py-3.5 px-4 text-left">
                           <div className="inline-flex items-center gap-1">

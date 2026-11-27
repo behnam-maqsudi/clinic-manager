@@ -49,8 +49,10 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await row.getByRole('button', { name: 'ویزیت شد ✓' }).click();
     await expect(row.getByText('ویزیت‌شده')).toBeVisible();
 
-    // Ensure attachments column is removed from main table
+    // Ensure attachments, date, and notes columns are removed from main table
     await expect(page.locator('thead').getByText('مدارک و آزمایش‌ها')).toHaveCount(0);
+    await expect(page.locator('thead').getByText('تاریخ شمسی')).toHaveCount(0);
+    await expect(page.locator('thead').getByText('یادداشت')).toHaveCount(0);
 
     // 3.5. Click patient row to open Full Details modal and update notes
     await row.click();
@@ -58,10 +60,10 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await page.getByPlaceholder('یادداشتی ثبت نشده است...').fill('یادداشت کامل تست جزئیات پرونده');
     await page.getByRole('button', { name: 'ذخیره یادداشت' }).click();
     await page.getByRole('button', { name: 'بستن جزئیات' }).click();
-    await expect(row.getByText('یادداشت کامل تست جزئیات پرونده')).toBeVisible();
 
-    // 4. Open Lab attachments & QR Code modal from inside Patient Details
+    // 4. Re-open details modal -> verify saved note persisted, then open Lab attachments & QR Code modal
     await row.click();
+    await expect(page.getByPlaceholder('یادداشتی ثبت نشده است...')).toHaveValue('یادداشت کامل تست جزئیات پرونده');
     await page.getByRole('button', { name: 'مدیریت فایل‌ها / اسکن QR موبایل' }).click();
     await expect(page.getByText('آپلود سریع با دوربین گوشی')).toBeVisible();
     const qrImg = page.getByAltText('QR Code');
