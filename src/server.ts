@@ -150,6 +150,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     clinic: 'مطب دکتر بهامین جهانیان',
     hostname: os.hostname(),
+    isSetupCompleted: db.getSetupState().setupCompleted,
     port: PORT,
     lanIps,
     urls: lanIps.map((ip) => `http://${ip}:${PORT}`),
@@ -191,6 +192,7 @@ app.get('/api/network/discover', async (_req, res) => {
             ok?: boolean;
             clinic?: string;
             hostname?: string;
+            isSetupCompleted?: boolean;
             port?: number;
           };
           if (!data?.ok || !data?.clinic) return null;
@@ -199,6 +201,7 @@ app.get('/api/network/discover', async (_req, res) => {
             url,
             clinic: data.clinic,
             hostname: data.hostname || ip,
+            isSetupCompleted: Boolean(data.isSetupCompleted),
             port: Number(data.port) || PORT,
             isSelf: selfIpSet.has(ip),
           };
@@ -307,7 +310,7 @@ app.get('/api/setup', (_req, res) => {
 app.post('/api/setup', (req, res) => {
   try {
     const current = db.getSetupState();
-    const { primaryRole = 'doctor', doctorPin = '', currentPin = '' } = req.body || {};
+    const { doctorPin = '', secretaryPin = '', currentPin = '' } = req.body || {};
     const headerToken = req.get('x-doctor-token');
     if (
       current.setupCompleted &&
@@ -317,17 +320,31 @@ app.post('/api/setup', (req, res) => {
     ) {
       return res.status(401).json({ ok: false, message: 'برای تغییر تنظیمات اولیه، رمز فعلی پزشک الزامی است.' });
     }
-    const role = primaryRole === 'secretary' ? 'secretary' : 'doctor';
     const state = db.completeSetup({
-      primaryRole: role,
-      doctorPin: role === 'doctor' ? String(doctorPin || '') : undefined,
+      doctorPin: String(doctorPin || ''),
+      secretaryPin: String(secretaryPin || ''),
     });
-    const doctorToken = role === 'doctor' ? db.issueDoctorToken() : '';
+    const doctorToken = db.issueDoctorToken();
     broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
     return res.json({ ok: true, ...state, doctorToken });
   } catch (err) {
     return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const role = req.body?.role === 'doctor' ? 'doctor' : 'secretary';
+  const pin = String(req.body?.pin || '');
+  if (role === 'doctor') {
+    if (!db.verifyDoctorPin(pin)) {
+      return res.json({ ok: false, message: 'رمز عبور پزشک اشتباه است.' });
+    }
+    return res.json({ ok: true, role: 'doctor', doctorToken: db.issueDoctorToken() });
+  }
+  if (!db.verifySecretaryPin(pin)) {
+    return res.json({ ok: false, message: 'رمز عبور منشی اشتباه است.' });
+  }
+  return res.json({ ok: true, role: 'secretary', doctorToken: '' });
 });
 
 app.post('/api/auth/verify-pin', (req, res) => {
@@ -353,6 +370,19 @@ app.post('/api/dev/reset-setup', (req, res) => {
     return res.status(403).json({ ok: false, message: 'دسترسی غیرمجاز برای بازنشانی تنظیمات.' });
   }
   const state = db.resetSetupState();
+  broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
+  return res.json({ ok: true, ...state });
+});
+
+app.post('/api/dev/factory-reset', (req, res) => {
+  const current = db.getSetupState();
+  const isDevRequest = req.get('x-dev-mode') === 'true';
+  const hasValidToken = db.verifyDoctorToken(req.get('x-doctor-token'));
+  if (current.hasDoctorPin && !isDevRequest && !hasValidToken) {
+    return res.status(403).json({ ok: false, message: 'دسترسی غیرمجاز برای ریست کامل.' });
+  }
+  const state = db.factoryResetDev();
+  broadcastEvent('patients_changed', { action: 'factory_reset' });
   broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
   return res.json({ ok: true, ...state });
 });

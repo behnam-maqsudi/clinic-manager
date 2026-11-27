@@ -84,15 +84,37 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.webContents.on('did-fail-load', async (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
-    // If remote server is unreachable on main frame, fall back to local server so user isn't stuck
-    if (isMainFrame && readRemoteUrl()) {
-      const port = await ensureLocalServer();
-      mainWindow?.loadURL(`http://localhost:${port}`);
+  let isFallingBack = false;
+
+  mainWindow.webContents.on('did-fail-load', async (_event, errorCode, _errorDescription, validatedURL, isMainFrame) => {
+    // Ignore ERR_ABORTED (-3) caused by intentional redirects/navigations
+    if (errorCode === -3 || isFallingBack) return;
+    if (isMainFrame && readRemoteUrl() && validatedURL && !validatedURL.startsWith('http://localhost:')) {
+      isFallingBack = true;
+      try {
+        const port = await ensureLocalServer();
+        await mainWindow?.loadURL(`http://localhost:${port}`);
+      } finally {
+        isFallingBack = false;
+      }
     }
   });
 
-  await mainWindow.loadURL(targetUrl);
+  try {
+    await mainWindow.loadURL(targetUrl);
+  } catch (err) {
+    if (remoteUrl) {
+      isFallingBack = true;
+      try {
+        const port = await ensureLocalServer();
+        await mainWindow.loadURL(`http://localhost:${port}`);
+      } finally {
+        isFallingBack = false;
+      }
+    } else {
+      throw err;
+    }
+  }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -103,13 +125,19 @@ ipcMain.handle('clinic:get-remote-url', () => readRemoteUrl());
 
 ipcMain.handle('clinic:set-remote-url', async (_event, url: string) => {
   const clean = writeRemoteUrl(url || '');
-  if (clean) {
-    await mainWindow?.loadURL(clean);
-  } else {
+  try {
+    if (clean) {
+      await mainWindow?.loadURL(clean);
+    } else {
+      const port = await ensureLocalServer();
+      await mainWindow?.loadURL(`http://localhost:${port}`);
+    }
+    return { ok: true, remoteUrl: clean };
+  } catch (err) {
     const port = await ensureLocalServer();
-    await mainWindow?.loadURL(`http://localhost:${port}`);
+    await mainWindow?.loadURL(`http://localhost:${port}`).catch(() => {});
+    return { ok: false, remoteUrl: '', message: err instanceof Error ? err.message : String(err) };
   }
-  return { ok: true, remoteUrl: clean };
 });
 
 ipcMain.handle('clinic:download-update', async (_event, url: string, fileName: string) => {

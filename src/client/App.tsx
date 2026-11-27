@@ -10,6 +10,7 @@ import { useClinicSync } from './store/useClinicSync';
 import { formatShamsiDate, getTodayIso, STATUS_META, toPersianDigits } from './utils/clinicHelpers';
 import { MessagesModal } from './components/MessagesModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
+import { LoginModal } from './components/LoginModal';
 import { SettingsModal } from './components/SettingsModal';
 import { PatientFormModal } from './components/PatientFormModal';
 import { BulkImportModal } from './components/BulkImportModal';
@@ -22,6 +23,7 @@ import {
   ChevronDown,
   Hourglass,
   ListPlus,
+  LogOut,
   MessageSquare,
   Paperclip,
   Pencil,
@@ -41,11 +43,12 @@ export default function App() {
   useClinicSync();
 
   const role = useAppStore((s) => s.role);
-  const setRole = useAppStore((s) => s.setRole);
-  const setDoctorToken = useAppStore((s) => s.setDoctorToken);
+  const loginSuccess = useAppStore((s) => s.loginSuccess);
+  const logout = useAppStore((s) => s.logout);
   const devMode = useAppStore((s) => s.devMode);
   const setupState = useAppStore((s) => s.setupState);
   const setSetupState = useAppStore((s) => s.setSetupState);
+  const remoteHostUrl = useAppStore((s) => s.remoteHostUrl);
   const sseConnected = useAppStore((s) => s.sseConnected);
   const toast = useAppStore((s) => s.toast);
   const notify = useAppStore((s) => s.notify);
@@ -181,6 +184,15 @@ export default function App() {
                   <span className={`w-1.5 h-1.5 rounded-full ${sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
                   {sseConnected ? 'همگام‌سازی زنده' : 'در حال اتصال...'}
                 </span>
+                <span
+                  className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    remoteHostUrl
+                      ? 'bg-sky-50 text-sky-700 border-sky-200'
+                      : 'bg-teal-50 text-teal-700 border-teal-200'
+                  }`}
+                >
+                  {remoteHostUrl ? 'سیستم فرعی' : 'سیستم اصلی'}
+                </span>
                 {devMode && (
                   <button onClick={() => setSettingsModalOpen(true)} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-200">
                     <Wrench className="w-3 h-3" />
@@ -198,11 +210,22 @@ export default function App() {
             <div
               style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)', color: 'var(--accent)' }}
               className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold"
-              title="تغییر نقش فقط از تنظیمات و با رمز عبور امکان‌پذیر است"
             >
               {role === 'doctor' ? <Stethoscope className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
               <span>{role === 'doctor' ? 'پنل پزشک' : 'پنل منشی'}</span>
             </div>
+
+            <button
+              type="button"
+              onClick={logout}
+              style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+              className="px-2.5 py-2 rounded-xl border hover:opacity-90 text-xs font-medium inline-flex items-center gap-1"
+              title="خروج / تعویض کاربر"
+              aria-label="خروج از حساب"
+            >
+              <LogOut className="w-4 h-4 text-slate-500" />
+              <span className="hidden lg:inline">خروج</span>
+            </button>
 
             <button
               onClick={openMessagesModal}
@@ -532,13 +555,14 @@ export default function App() {
 
       <SetupWizardModal
         open={!setupState.setupCompleted}
-        onComplete={(chosenRole, state, token) => {
+        onComplete={(state, token) => {
           setSetupState(state);
-          if (token) setDoctorToken(token);
-          setRole(chosenRole);
-          notify(`راه‌اندازی اولیه تکمیل شد (${chosenRole === 'doctor' ? 'سیستم پزشک' : 'سیستم منشی'}).`);
+          loginSuccess('doctor', token);
+          notify('سیستم اصلی مطب راه‌اندازی شد و با نقش پزشک وارد شدید.');
         }}
       />
+
+      <LoginModal />
 
       <MessagesModal
         open={messagesModalOpen}

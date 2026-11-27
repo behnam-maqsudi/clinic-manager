@@ -10,10 +10,12 @@ export interface InviteBannerData {
 
 interface AppState {
   role: UserRole;
+  isAuthenticated: boolean;
   doctorToken: string;
   theme: string;
   devMode: boolean;
   setupState: ClinicSetupState;
+  remoteHostUrl: string;
   sseConnected: boolean;
   clientId: string;
   toast: string;
@@ -23,6 +25,8 @@ interface AppState {
 
   setRole: (role: UserRole) => void;
   setDoctorToken: (token: string) => void;
+  loginSuccess: (role: UserRole, doctorToken?: string) => void;
+  logout: () => void;
   setTheme: (theme: string) => void;
   setDevMode: (devMode: boolean) => void;
   setDevNetworkOffline: (offline: boolean) => void;
@@ -53,10 +57,12 @@ const initialClientId =
 
 export const useAppStore = create<AppState>((set, get) => ({
   role: initialRole,
+  isAuthenticated: localStorage.getItem('clinic_logged_in') === 'true',
   doctorToken: localStorage.getItem('clinic_doctor_token') || '',
   theme: initialTheme,
   devMode: localStorage.getItem('clinic_dev_mode') === 'true',
-  setupState: { setupCompleted: true, primaryRole: null, hasDoctorPin: false },
+  setupState: { setupCompleted: true, hasDoctorPin: false, hasSecretaryPin: false },
+  remoteHostUrl: '',
   sseConnected: false,
   clientId: initialClientId,
   toast: '',
@@ -81,6 +87,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       localStorage.removeItem('clinic_doctor_token');
     }
     set({ doctorToken });
+  },
+
+  loginSuccess: (role, doctorToken = '') => {
+    localStorage.setItem('clinic_role', role);
+    localStorage.setItem('clinic_logged_in', 'true');
+    if (role === 'doctor' && doctorToken) {
+      localStorage.setItem('clinic_doctor_token', doctorToken);
+    } else {
+      localStorage.removeItem('clinic_doctor_token');
+    }
+    set({ role, isAuthenticated: true, doctorToken: role === 'doctor' ? doctorToken : '' });
+  },
+
+  logout: () => {
+    localStorage.removeItem('clinic_logged_in');
+    localStorage.removeItem('clinic_doctor_token');
+    set({ isAuthenticated: false, doctorToken: '' });
   },
 
   setTheme: (theme) => {
@@ -136,35 +159,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadSetupState: async () => {
+    if (window.clinicDesktop?.isElectron) {
+      window.clinicDesktop
+        .getRemoteUrl()
+        .then((u) => set({ remoteHostUrl: u || '' }))
+        .catch(() => {});
+    }
     try {
       const res = await fetch('/api/setup');
       const data = await res.json();
       if (data.ok) {
-        const nextSetup = {
+        const nextSetup: ClinicSetupState = {
           setupCompleted: Boolean(data.setupCompleted),
-          primaryRole: data.primaryRole || null,
           hasDoctorPin: Boolean(data.hasDoctorPin),
+          hasSecretaryPin: Boolean(data.hasSecretaryPin),
         };
         set({ setupState: nextSetup });
 
-        // Prevent localStorage tampering: verify doctorToken if role is doctor
-        const { role, doctorToken, devMode, setRole, setDoctorToken } = get();
-        if (nextSetup.setupCompleted && role === 'doctor' && !devMode) {
-          if (nextSetup.hasDoctorPin) {
-            if (!doctorToken) {
-              setRole('secretary');
-            } else {
-              const vRes = await fetch('/api/auth/verify-token', {
-                headers: { 'x-doctor-token': doctorToken },
-              });
-              const vData = await vRes.json();
-              if (!vData.valid) {
-                setDoctorToken('');
-                setRole('secretary');
-              }
+        const { role, isAuthenticated, doctorToken, devMode, logout } = get();
+        if (nextSetup.setupCompleted && isAuthenticated && role === 'doctor' && nextSetup.hasDoctorPin && !devMode) {
+          if (!doctorToken) {
+            logout();
+          } else {
+            const vRes = await fetch('/api/auth/verify-token', {
+              headers: { 'x-doctor-token': doctorToken },
+            });
+            const vData = await vRes.json();
+            if (!vData.valid) {
+              logout();
             }
-          } else if (nextSetup.primaryRole === 'secretary') {
-            setRole('secretary');
           }
         }
       }
