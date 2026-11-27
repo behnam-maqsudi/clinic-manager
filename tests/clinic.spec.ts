@@ -168,8 +168,9 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await expect(page.getByText('بیمار آماده ورود است').last()).toBeVisible();
     await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
 
-    // 6.6. LAN Discovery in Settings + incoming connection invite banner via SSE
+    // 6.6. LAN Discovery in Settings (Network tab) + incoming connection invite banner via SSE
     await page.getByRole('button', { name: 'تنظیمات' }).click();
+    await page.getByRole('button', { name: 'شبکه و اتصال' }).click();
     await page.getByRole('button', { name: 'جستجو در شبکه' }).click();
     await expect(page.getByRole('button', { name: 'جستجو در شبکه' })).toBeVisible({ timeout: 10_000 });
     await page.locator('.fixed').getByRole('button').first().click();

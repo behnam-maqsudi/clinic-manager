@@ -53,7 +53,8 @@
     "react": "^19.3.1",
     "react-date-object": "^2.1.9",
     "react-dom": "^19.3.1",
-    "react-multi-date-picker": "^4.5.2"
+    "react-multi-date-picker": "^4.5.2",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
