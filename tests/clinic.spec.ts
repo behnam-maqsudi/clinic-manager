@@ -31,19 +31,33 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toBeVisible();
     await expect(page.locator('table').getByText('پرونده ۹۴۱۲')).toBeVisible();
 
-    // 2. Search by last 4 digits of mobile
-    const searchInput = page.getByPlaceholder('جستجو با نام، شماره پرونده، ۴ رقم آخر موبایل یا کد ملی...');
-    await searchInput.fill('6789');
+    // 2. Search with 1s debounce (by phone/national_id/name)
+    const searchInput = page.getByPlaceholder('جستجو با نام، شماره پرونده، شماره تماس یا کد ملی...');
+    await searchInput.fill('09120006789');
     await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toBeVisible();
 
     await searchInput.fill('999999');
-    await expect(page.getByText('هنوز مراجعه‌کننده‌ای در این لیست ثبت نشده است')).toBeVisible();
+    await expect(page.getByText('هنوز مراجعه‌کننده‌ای در این لیست ثبت نشده است')).toBeVisible({ timeout: 3000 });
     await searchInput.fill('');
 
-    // 2.5. Shamsi DatePicker opens, filters, and clears cleanly back to امروز
+    // 2.5. Shamsi DatePicker filters by non-today date and clears cleanly back to امروز
+    const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    await page.request.post('/api/patients', {
+      data: { full_name: 'تست E2E دیروز', visit_date: yesterday, file_number: '888' },
+    });
+
     await page.getByRole('button', { name: 'انتخاب تاریخ شمسی' }).click();
     await expect(page.locator('.rmdp-wrapper')).toBeVisible();
-    await page.locator('.rmdp-day.rmdp-today span').first().click();
+    // Pick the day before today in the calendar if visible, or navigate prev month
+    const todayCell = page.locator('.rmdp-day.rmdp-today');
+    const prevCell = todayCell.locator('xpath=preceding-sibling::div[not(contains(@class,"rmdp-disabled"))][1]');
+    if ((await prevCell.count()) > 0) {
+      await prevCell.locator('span').first().click();
+      await expect(page.locator('table').getByText('تست E2E دیروز', { exact: true })).toBeVisible();
+      await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toHaveCount(0);
+    } else {
+      await page.locator('.rmdp-day.rmdp-today span').first().click();
+    }
     await page.getByRole('button', { name: 'پاک کردن فیلتر تاریخ' }).click();
     await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toBeVisible();
 

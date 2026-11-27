@@ -142,6 +142,7 @@ export default function App() {
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<'today' | 'all' | 'custom'>('today');
   const [customRange, setCustomRange] = useState<DateObject[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | PatientStatus>('all');
@@ -254,7 +255,7 @@ export default function App() {
 
   async function fetchPatients() {
     const params = new URLSearchParams();
-    if (query.trim()) params.set('q', query.trim());
+    if (debouncedQuery.trim()) params.set('q', debouncedQuery.trim());
     if (statusFilter !== 'all') params.set('status', statusFilter);
     if (dateFilter === 'today') {
       params.set('date', getTodayIso());
@@ -274,18 +275,31 @@ export default function App() {
     }
   }
 
+  const fetchPatientsRef = useRef(fetchPatients);
+  fetchPatientsRef.current = fetchPatients;
+
+  // 1 second pause after typing before searching (instant when cleared)
   useEffect(() => {
-    const t = setTimeout(fetchPatients, 120);
+    if (!query.trim()) {
+      setDebouncedQuery('');
+      return;
+    }
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), 1000);
     return () => clearTimeout(t);
-  }, [query, dateFilter, customRange, statusFilter]);
+  }, [query]);
+
+  // Fetch immediately when filters or debouncedQuery change
+  useEffect(() => {
+    fetchPatients();
+  }, [debouncedQuery, dateFilter, customRange, statusFilter]);
 
   // SSE Live Sync
   useEffect(() => {
     const evtSource = new EventSource('/api/events');
     evtSource.addEventListener('connected', () => setSseConnected(true));
-    evtSource.addEventListener('patients_changed', () => fetchPatients());
+    evtSource.addEventListener('patients_changed', () => fetchPatientsRef.current());
     evtSource.addEventListener('attachments_changed', (e) => {
-      fetchPatients();
+      fetchPatientsRef.current();
       try {
         const payload = JSON.parse(e.data);
         if (activeLabIdRef.current === payload.patientId) {
@@ -748,7 +762,10 @@ export default function App() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="جستجو با نام، شماره پرونده، ۴ رقم آخر موبایل یا کد ملی..."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setDebouncedQuery(query.trim());
+              }}
+              placeholder="جستجو با نام، شماره پرونده، شماره تماس یا کد ملی..."
               style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
               className="w-full pr-10 pl-4 py-2.5 rounded-xl border focus:outline-none text-sm"
             />
