@@ -7,6 +7,7 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     for (const p of data.patients || []) {
       await request.delete(`/api/patients/${p.id}`);
     }
+    await request.post('/api/dev/reset-setup', { headers: { 'x-dev-mode': 'true' } });
   });
 
   test('full clinic workflow: create, search, status, attachments/QR, bulk import, themes & dev mode', async ({ page }) => {
