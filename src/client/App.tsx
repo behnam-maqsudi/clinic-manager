@@ -746,7 +746,6 @@ export default function App() {
                     <th className="py-3.5 px-4">کد ملی</th>
                     <th className="py-3.5 px-4">تاریخ شمسی</th>
                     <th className="py-3.5 px-4">وضعیت</th>
-                    <th className="py-3.5 px-4">مدارک و آزمایش‌ها</th>
                     <th className="py-3.5 px-4">یادداشت</th>
                     <th className="py-3.5 px-4 text-left">عملیات</th>
                   </tr>
@@ -775,6 +774,12 @@ export default function App() {
                                     پرونده {toPersianDigits(p.file_number)}
                                   </span>
                                 )}
+                                {(p.attachment_count ?? 0) > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-bold tabular-nums">
+                                    <Paperclip className="w-3 h-3" />
+                                    {toPersianDigits(p.attachment_count)}
+                                  </span>
+                                )}
                               </div>
                               <div style={{ color: 'var(--text-muted)' }} className="text-[11px]">
                                 ثبت توسط {p.created_by === 'doctor' ? 'پزشک' : 'منشی'}
@@ -790,22 +795,6 @@ export default function App() {
                             <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                             {st.label}
                           </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openLabModal(p.id);
-                            }}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${
-                              (p.attachment_count ?? 0) > 0
-                                ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
-                                : 'bg-slate-100/70 hover:bg-slate-200/70 text-slate-600 border-slate-200'
-                            }`}
-                          >
-                            <Paperclip className="w-3.5 h-3.5" />
-                            <span>{(p.attachment_count ?? 0) > 0 ? `${toPersianDigits(p.attachment_count)} آزمایش` : 'افزودن آزمایش'}</span>
-                          </button>
                         </td>
                         <td style={{ color: 'var(--text-muted)' }} className="py-3.5 px-4 text-xs max-w-[180px] truncate" title={p.notes}>
                           {p.notes || '—'}
