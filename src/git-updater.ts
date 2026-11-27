@@ -1,15 +1,16 @@
-const { exec } = require('node:child_process');
-const path = require('node:path');
-const { promisify } = require('node:util');
+import { exec } from 'node:child_process';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import type { GitUpdateStatus } from './shared/types';
 
 const execAsync = promisify(exec);
 const ROOT_DIR = path.join(__dirname, '..');
 
-async function runGit(args) {
+async function runGit(args: string) {
   return execAsync(`git ${args}`, { cwd: ROOT_DIR, windowsHide: true });
 }
 
-async function getGitStatus() {
+export async function getGitStatus(): Promise<GitUpdateStatus> {
   try {
     const { stdout: branchOut } = await runGit('rev-parse --abbrev-ref HEAD');
     const branch = branchOut.trim();
@@ -58,16 +59,23 @@ async function getGitStatus() {
       message: behind > 0 ? `${behind} بروزرسانی جدید در گیت‌هاب موجود است.` : 'برنامه کاملاً به‌روز است.',
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       hasRemote: false,
       behind: 0,
-      message: `خطا در بررسی گیت: ${err.message}`,
+      message: `خطا در بررسی گیت: ${message}`,
     };
   }
 }
 
-async function applyGitUpdate() {
+export async function applyGitUpdate(): Promise<{
+  ok: boolean;
+  updated: boolean;
+  commit?: string;
+  packageChanged?: boolean;
+  message: string;
+}> {
   const status = await getGitStatus();
   if (!status.ok) {
     return { ok: false, updated: false, message: status.message };
@@ -99,15 +107,11 @@ async function applyGitUpdate() {
       message: 'بروزرسانی با موفقیت انجام شد. سرور در حال راه‌اندازی مجدد است...',
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       updated: false,
-      message: `خطا در دریافت بروزرسانی: ${err.message}`,
+      message: `خطا در دریافت بروزرسانی: ${message}`,
     };
   }
 }
-
-module.exports = {
-  getGitStatus,
-  applyGitUpdate,
-};

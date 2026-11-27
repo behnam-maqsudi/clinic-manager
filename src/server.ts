@@ -1,14 +1,15 @@
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
-const express = require('express');
-const multer = require('multer');
-const QRCode = require('qrcode');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import express, { type Request, type Response } from 'express';
+import multer from 'multer';
+import QRCode from 'qrcode';
 
-const db = require('./db');
-const { getGitStatus, applyGitUpdate } = require('./git-updater');
+import * as db from './db';
+import { applyGitUpdate, getGitStatus } from './git-updater';
+import type { Attachment } from './shared/types';
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
@@ -22,10 +23,9 @@ if (fs.existsSync(DIST_DIR)) {
 }
 app.use(express.static(PUBLIC_DIR));
 
-// Track SSE clients for instant real-time sync between Secretary, Doctor, and Mobile
-const sseClients = new Set();
+const sseClients = new Set<Response>();
 
-function broadcastEvent(event, data = {}) {
+function broadcastEvent(event: string, data: Record<string, unknown> = {}) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) {
     try {
@@ -36,9 +36,9 @@ function broadcastEvent(event, data = {}) {
   }
 }
 
-function getLanIps() {
+function getLanIps(): string[] {
   const interfaces = os.networkInterfaces();
-  const ips = [];
+  const ips: string[] = [];
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] || []) {
       if (iface.family === 'IPv4' && !iface.internal) {
@@ -49,7 +49,7 @@ function getLanIps() {
   return ips;
 }
 
-function getPrimaryBaseUrl(req) {
+function getPrimaryBaseUrl(req: Request): string {
   const ips = getLanIps();
   if (ips.length > 0) {
     return `http://${ips[0]}:${PORT}`;
@@ -61,15 +61,14 @@ function getPrimaryBaseUrl(req) {
   return `http://localhost:${PORT}`;
 }
 
-// Configure Multer for patient lab/checkup file uploads
 const storage = multer.diskStorage({
-  destination(req, file, cb) {
+  destination(req, _file, cb) {
     const patientId = String(Number(req.params.id));
     const dir = path.join(db.UPLOADS_DIR, patientId);
     fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
-  filename(req, file, cb) {
+  filename(_req, file, cb) {
     const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
     const unique = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
     cb(null, unique);
@@ -79,7 +78,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 20 * 1024 * 1024, // 20 MB per file
+    fileSize: 20 * 1024 * 1024,
     files: 10,
   },
 });
@@ -110,7 +109,7 @@ app.get('/api/events', (req, res) => {
 });
 
 // --- Health & Network Info ---
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (_req, res) => {
   const lanIps = getLanIps();
   res.json({
     ok: true,
@@ -125,20 +124,22 @@ app.get('/api/health', (req, res) => {
 // --- Patients CRUD ---
 app.get('/api/patients', (req, res) => {
   try {
-    const { q = '', date = '', status = '' } = req.query;
+    const q = String(req.query.q || '');
+    const date = String(req.query.date || '');
+    const status = String(req.query.status || '');
     const patients = db.listPatients({ q, date, status });
     res.json({ ok: true, patients });
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 app.get('/api/patients/lookup', (req, res) => {
   try {
-    const matches = db.lookupReturningPatients(req.query.q || '');
+    const matches = db.lookupReturningPatients(String(req.query.q || ''));
     res.json({ ok: true, matches });
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -152,12 +153,12 @@ app.post('/api/patients/bulk', (req, res) => {
     broadcastEvent('patients_changed', { action: 'bulk_create', count: createdIds.length });
     return res.status(201).json({ ok: true, count: createdIds.length });
   } catch (err) {
-    return res.status(400).json({ ok: false, message: err.message });
+    return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 app.get('/api/patients/:id', (req, res) => {
-  const patient = db.getPatientById(req.params.id);
+  const patient = db.getPatientById(String(req.params.id));
   if (!patient) {
     return res.status(404).json({ ok: false, message: 'مراجعه‌کننده پیدا نشد.' });
   }
@@ -170,14 +171,15 @@ app.post('/api/patients', (req, res) => {
     broadcastEvent('patients_changed', { action: 'create', id: patient.id });
     res.status(201).json({ ok: true, patient });
   } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
+    res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 app.put('/api/patients/:id', (req, res) => {
   try {
-    const prev = db.getPatientById(req.params.id);
-    const patient = db.updatePatient(req.params.id, req.body || {});
+    const id = String(req.params.id);
+    const prev = db.getPatientById(id);
+    const patient = db.updatePatient(id, req.body || {});
     if (!patient) {
       return res.status(404).json({ ok: false, message: 'مراجعه‌کننده پیدا نشد.' });
     }
@@ -195,31 +197,34 @@ app.put('/api/patients/:id', (req, res) => {
 
     return res.json({ ok: true, patient });
   } catch (err) {
-    return res.status(400).json({ ok: false, message: err.message });
+    return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 app.delete('/api/patients/:id', (req, res) => {
-  const deleted = db.deletePatient(req.params.id);
+  const id = String(req.params.id);
+  const deleted = db.deletePatient(id);
   if (!deleted) {
     return res.status(404).json({ ok: false, message: 'مراجعه‌کننده پیدا نشد.' });
   }
-  broadcastEvent('patients_changed', { action: 'delete', id: Number(req.params.id) });
+  broadcastEvent('patients_changed', { action: 'delete', id: Number(id) });
   return res.json({ ok: true });
 });
 
-// --- Patient Attachments (Lab tests, Checkups, Prescriptions) ---
+// --- Patient Attachments ---
 app.get('/api/patients/:id/attachments', (req, res) => {
-  const patient = db.getPatientById(req.params.id);
+  const id = String(req.params.id);
+  const patient = db.getPatientById(id);
   if (!patient) {
     return res.status(404).json({ ok: false, message: 'مراجعه‌کننده پیدا نشد.' });
   }
-  const attachments = db.listAttachments(req.params.id);
+  const attachments = db.listAttachments(id);
   return res.json({ ok: true, patient, attachments });
 });
 
 app.post('/api/patients/:id/attachments', (req, res) => {
-  const patient = db.getPatientById(req.params.id);
+  const id = String(req.params.id);
+  const patient = db.getPatientById(id);
   if (!patient) {
     return res.status(404).json({ ok: false, message: 'مراجعه‌کننده پیدا نشد.' });
   }
@@ -228,17 +233,16 @@ app.post('/api/patients/:id/attachments', (req, res) => {
     if (err) {
       return res.status(400).json({ ok: false, message: `خطا در آپلود فایل: ${err.message}` });
     }
-    const uploadedFiles = req.files || [];
+    const uploadedFiles = (req.files as Express.Multer.File[]) || [];
     if (uploadedFiles.length === 0) {
       return res.status(400).json({ ok: false, message: 'هیچ فایلی انتخاب نشده است.' });
     }
 
     const title = String(req.body?.title || '').trim();
     const uploadedBy = String(req.body?.uploaded_by || 'secretary').trim();
-    const saved = [];
+    const saved: Attachment[] = [];
 
     for (const file of uploadedFiles) {
-      // Fix latin1 -> utf8 encoding for Persian filenames in multipart headers
       const originalName = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8');
       const record = db.addAttachment({
         patientId: patient.id,
@@ -258,7 +262,7 @@ app.post('/api/patients/:id/attachments', (req, res) => {
 });
 
 app.get('/api/attachments/:attachmentId/file', (req, res) => {
-  const att = db.getAttachmentById(req.params.attachmentId);
+  const att = db.getAttachmentById(String(req.params.attachmentId));
   if (!att) {
     return res.status(404).json({ ok: false, message: 'فایل پیدا نشد.' });
   }
@@ -276,18 +280,18 @@ app.get('/api/attachments/:attachmentId/file', (req, res) => {
 });
 
 app.delete('/api/attachments/:attachmentId', (req, res) => {
-  const att = db.getAttachmentById(req.params.attachmentId);
+  const id = String(req.params.attachmentId);
+  const att = db.getAttachmentById(id);
   if (!att) {
     return res.status(404).json({ ok: false, message: 'فایل پیدا نشد.' });
   }
-  db.deleteAttachment(req.params.attachmentId);
+  db.deleteAttachment(id);
   broadcastEvent('attachments_changed', { patientId: att.patient_id });
   return res.json({ ok: true });
 });
 
-// QR Code for Mobile Upload
 app.get('/api/patients/:id/qr', async (req, res) => {
-  const patient = db.getPatientById(req.params.id);
+  const patient = db.getPatientById(String(req.params.id));
   if (!patient) {
     return res.status(404).json({ ok: false, message: 'مراجعه‌کننده پیدا نشد.' });
   }
@@ -301,49 +305,48 @@ app.get('/api/patients/:id/qr', async (req, res) => {
     });
     return res.json({ ok: true, uploadUrl, qrDataUrl });
   } catch (err) {
-    return res.status(500).json({ ok: false, message: err.message });
+    return res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 // --- Backup ---
-app.post('/api/backup/create', (req, res) => {
+app.post('/api/backup/create', (_req, res) => {
   try {
     const file = db.createBackup();
     res.json({ ok: true, file: path.basename(file), message: 'نسخه پشتیبان با موفقیت ذخیره شد.' });
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
-app.get('/api/backup/download', (req, res) => {
+app.get('/api/backup/download', (_req, res) => {
   try {
     const dbPath = db.getDbPath();
     const stamp = new Date().toISOString().slice(0, 10);
     res.download(dbPath, `clinic-jahanian-backup-${stamp}.db`);
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
 });
 
 // --- Git Self-Update ---
-app.get('/api/update/status', async (req, res) => {
+app.get('/api/update/status', async (_req, res) => {
   const status = await getGitStatus();
   res.json(status);
 });
 
-app.post('/api/update/apply', async (req, res) => {
+app.post('/api/update/apply', async (_req, res) => {
   const result = await applyGitUpdate();
   res.json(result);
 
   if (result.ok && result.updated) {
-    // Exit with code 42 so start.bat automatically restarts the server with the updated code
     setTimeout(() => {
       process.exit(42);
     }, 1000);
   }
 });
 
-function openStandaloneWindow(url) {
+function openStandaloneWindow(url: string) {
   const candidates = [
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -365,7 +368,6 @@ function openStandaloneWindow(url) {
     return;
   }
 
-  // Fallback to default shell open
   const child = spawn('cmd', ['/c', 'start', '', url], {
     detached: true,
     stdio: 'ignore',

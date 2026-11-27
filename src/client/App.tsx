@@ -1,4 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  Attachment,
+  GitUpdateStatus,
+  Patient,
+  PatientInput,
+  PatientStatus,
+  ReturningMatch,
+  UserRole,
+} from '../shared/types';
 import {
   BellRing,
   Calendar,
@@ -33,7 +42,7 @@ import {
   X,
 } from 'lucide-react';
 
-const STATUS_META = {
+const STATUS_META: Record<PatientStatus, { label: string; badge: string; dot: string }> = {
   waiting: { label: 'در انتظار', badge: 'bg-amber-100 text-amber-800', dot: 'bg-amber-500' },
   in_progress: { label: 'در حال ویزیت', badge: 'bg-teal-100 text-teal-800', dot: 'bg-teal-600' },
   visited: { label: 'ویزیت‌شده', badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-600' },
@@ -57,16 +66,16 @@ function getTodayIso() {
   return `${y}-${m}-${d}`;
 }
 
-function toPersianDigits(str) {
+function toPersianDigits(str: string | number | null | undefined): string {
   return String(str ?? '').replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
 }
 
-function formatShamsiDate(isoDate, withWeekday = false) {
+function formatShamsiDate(isoDate: string, withWeekday = false): string {
   if (!isoDate) return '—';
   const [y, m, d] = isoDate.split('-').map(Number);
   if (!y || !m || !d) return isoDate;
   const dateObj = new Date(y, m - 1, d, 12, 0, 0);
-  const options = withWeekday
+  const options: Intl.DateTimeFormatOptions = withWeekday
     ? { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }
     : { year: 'numeric', month: '2-digit', day: '2-digit' };
   return new Intl.DateTimeFormat('fa-IR-u-ca-persian', options).format(dateObj);
@@ -74,7 +83,8 @@ function formatShamsiDate(isoDate, withWeekday = false) {
 
 function playGentleChime() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
@@ -89,13 +99,13 @@ function playGentleChime() {
   } catch {}
 }
 
-function parsePasteLines(raw) {
+function parsePasteLines(raw: string): PatientInput[] {
   return raw
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map((line: string) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const parts = line.split(/[\t,\-|،]+/).map((s) => s.trim()).filter(Boolean);
+    .map((line: string) => {
+      const parts = line.split(/[\t,\-|،]+/).map((s: string) => s.trim()).filter(Boolean);
       let fullName = '';
       let phone = '';
       let fileNumber = '';
@@ -120,15 +130,15 @@ function parsePasteLines(raw) {
 }
 
 export default function App() {
-  const [role, setRole] = useState(() => localStorage.getItem('clinic_role') || 'secretary');
-  const [theme, setTheme] = useState(() => localStorage.getItem('clinic_theme') || 'teal');
-  const [devMode, setDevMode] = useState(() => localStorage.getItem('clinic_dev_mode') === 'true');
+  const [role, setRole] = useState<UserRole>(() => (localStorage.getItem('clinic_role') as UserRole) || 'secretary');
+  const [theme, setTheme] = useState<string>(() => localStorage.getItem('clinic_theme') || 'teal');
+  const [devMode, setDevMode] = useState<boolean>(() => localStorage.getItem('clinic_dev_mode') === 'true');
 
-  const [patients, setPatients] = useState([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [query, setQuery] = useState('');
-  const [dateFilter, setDateFilter] = useState('today');
+  const [dateFilter, setDateFilter] = useState<'today' | 'all' | 'custom'>('today');
   const [customDate, setCustomDate] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | PatientStatus>('all');
   const [sseConnected, setSseConnected] = useState(true);
 
   const [toast, setToast] = useState('');
@@ -136,8 +146,17 @@ export default function App() {
 
   // Modals
   const [patientModalOpen, setPatientModalOpen] = useState(false);
-  const [editingPatient, setEditingPatient] = useState(null);
-  const [formState, setFormState] = useState({
+  const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
+  const [formState, setFormState] = useState<{
+    full_name: string;
+    file_number: string;
+    phone: string;
+    national_id: string;
+    visit_date: string;
+    visit_time: string;
+    status: PatientStatus;
+    notes: string;
+  }>({
     full_name: '',
     file_number: '',
     phone: '',
@@ -147,38 +166,47 @@ export default function App() {
     status: 'waiting',
     notes: '',
   });
-  const [returningMatches, setReturningMatches] = useState([]);
+  const [returningMatches, setReturningMatches] = useState<ReturningMatch[]>([]);
 
-  const [labModalPatientId, setLabModalPatientId] = useState(null);
-  const [labPatient, setLabPatient] = useState(null);
-  const [attachments, setAttachments] = useState([]);
+  const [labModalPatientId, setLabModalPatientId] = useState<number | null>(null);
+  const [labPatient, setLabPatient] = useState<Patient | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [qrInfo, setQrInfo] = useState({ qrDataUrl: '', uploadUrl: '' });
   const [pcUploadTitle, setPcUploadTitle] = useState('');
 
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
-  const [bulkTab, setBulkTab] = useState('grid');
+  const [bulkTab, setBulkTab] = useState<'grid' | 'paste'>('grid');
   const [bulkDate, setBulkDate] = useState(getTodayIso());
-  const [bulkRows, setBulkRows] = useState(() =>
+  const [bulkRows, setBulkRows] = useState<Array<{ full_name: string; phone: string; file_number: string; national_id: string }>>(() =>
     Array.from({ length: 5 }, () => ({ full_name: '', phone: '', file_number: '', national_id: '' }))
   );
   const [bulkPasteText, setBulkPasteText] = useState('');
 
   const [networkModalOpen, setNetworkModalOpen] = useState(false);
-  const [lanUrls, setLanUrls] = useState([]);
+  const [lanUrls, setLanUrls] = useState<string[]>([]);
 
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
-  const [gitStatus, setGitStatus] = useState({ commit: '...', branch: 'main', message: 'در حال بررسی...', behind: 0 });
+  const [gitStatus, setGitStatus] = useState<GitUpdateStatus>({
+    ok: true,
+    hasRemote: false,
+    commit: '...',
+    branch: 'main',
+    message: 'در حال بررسی...',
+    behind: 0,
+  });
   const [backupMessage, setBackupMessage] = useState('');
 
-  const activeLabIdRef = useRef(null);
+  const activeLabIdRef = useRef<number | null>(null);
   activeLabIdRef.current = labModalPatientId;
-  const roleRef = useRef(role);
+  const roleRef = useRef<UserRole>(role);
   roleRef.current = role;
+  const toastTimerRef = useRef<number | undefined>(undefined);
+  const callTimerRef = useRef<number | undefined>(undefined);
 
-  function notify(msg) {
+  function notify(msg: string) {
     setToast(msg);
-    clearTimeout(notify._t);
-    notify._t = setTimeout(() => setToast(''), 3200);
+    window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(''), 3200);
   }
 
   // Apply theme
@@ -245,11 +273,11 @@ export default function App() {
     return () => evtSource.close();
   }, []);
 
-  function triggerCallAlert(msg) {
+  function triggerCallAlert(msg: string) {
     playGentleChime();
     setCallBanner(msg);
-    clearTimeout(triggerCallAlert._t);
-    triggerCallAlert._t = setTimeout(() => setCallBanner(''), 6000);
+    window.clearTimeout(callTimerRef.current);
+    callTimerRef.current = window.setTimeout(() => setCallBanner(''), 6000);
   }
 
   const stats = useMemo(() => {
@@ -278,7 +306,7 @@ export default function App() {
     setPatientModalOpen(true);
   }
 
-  function openEditPatientModal(p) {
+  function openEditPatientModal(p: Patient) {
     setEditingPatient(p);
     setReturningMatches([]);
     setFormState({
@@ -294,7 +322,7 @@ export default function App() {
     setPatientModalOpen(true);
   }
 
-  async function lookupReturning(val) {
+  async function lookupReturning(val: string) {
     if (editingPatient || !val || val.trim().length < 2) {
       setReturningMatches([]);
       return;
@@ -304,7 +332,7 @@ export default function App() {
     setReturningMatches(data.matches || []);
   }
 
-  async function savePatient(e) {
+  async function savePatient(e: React.FormEvent) {
     e.preventDefault();
     const url = editingPatient ? `/api/patients/${editingPatient.id}` : '/api/patients';
     const method = editingPatient ? 'PUT' : 'POST';
@@ -323,7 +351,7 @@ export default function App() {
     }
   }
 
-  async function quickStatus(id, status) {
+  async function quickStatus(id: number, status: PatientStatus) {
     const res = await fetch(`/api/patients/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -336,7 +364,7 @@ export default function App() {
     }
   }
 
-  async function rebookToday(p) {
+  async function rebookToday(p: Patient) {
     const res = await fetch('/api/patients', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -358,7 +386,7 @@ export default function App() {
     }
   }
 
-  async function removePatient(id) {
+  async function removePatient(id: number) {
     if (!confirm('آیا از حذف این مراجعه‌کننده و مدارکش مطمئن هستید؟')) return;
     const res = await fetch(`/api/patients/${id}`, { method: 'DELETE' });
     const data = await res.json();
@@ -369,7 +397,7 @@ export default function App() {
   }
 
   // Lab Modal
-  async function loadAttachments(pid) {
+  async function loadAttachments(pid: number) {
     const res = await fetch(`/api/patients/${pid}/attachments`);
     const data = await res.json();
     if (data.ok) {
@@ -378,7 +406,7 @@ export default function App() {
     }
   }
 
-  async function openLabModal(pid) {
+  async function openLabModal(pid: number) {
     setLabModalPatientId(pid);
     await loadAttachments(pid);
     const qrRes = await fetch(`/api/patients/${pid}/qr`);
@@ -388,7 +416,7 @@ export default function App() {
     }
   }
 
-  async function uploadFilesFromPc(files) {
+  async function uploadFilesFromPc(files: FileList | null) {
     if (!labModalPatientId || !files || files.length === 0) return;
     const formData = new FormData();
     for (const f of files) formData.append('files', f);
@@ -407,11 +435,11 @@ export default function App() {
     }
   }
 
-  async function removeAttachment(attId) {
+  async function removeAttachment(attId: number) {
     if (!confirm('این مدرک حذف شود؟')) return;
     const res = await fetch(`/api/attachments/${attId}`, { method: 'DELETE' });
     const data = await res.json();
-    if (data.ok) {
+    if (data.ok && labModalPatientId !== null) {
       notify('مدرک حذف شد.');
       loadAttachments(labModalPatientId);
       fetchPatients();
@@ -660,7 +688,7 @@ export default function App() {
 
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | PatientStatus)}
               style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
               className="px-3.5 py-2 rounded-xl border text-xs font-medium focus:outline-none cursor-pointer"
             >
@@ -731,13 +759,13 @@ export default function App() {
                           <button
                             onClick={() => openLabModal(p.id)}
                             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${
-                              p.attachment_count > 0
+                              (p.attachment_count ?? 0) > 0
                                 ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
                                 : 'bg-slate-100/70 hover:bg-slate-200/70 text-slate-600 border-slate-200'
                             }`}
                           >
                             <Paperclip className="w-3.5 h-3.5" />
-                            <span>{p.attachment_count > 0 ? `${toPersianDigits(p.attachment_count)} آزمایش` : 'افزودن آزمایش'}</span>
+                            <span>{(p.attachment_count ?? 0) > 0 ? `${toPersianDigits(p.attachment_count)} آزمایش` : 'افزودن آزمایش'}</span>
                           </button>
                         </td>
                         <td style={{ color: 'var(--text-muted)' }} className="py-3.5 px-4 text-xs max-w-[180px] truncate" title={p.notes}>
@@ -928,7 +956,7 @@ export default function App() {
                   <label className="block text-xs font-semibold mb-1.5">وضعیت</label>
                   <select
                     value={formState.status}
-                    onChange={(e) => setFormState({ ...formState, status: e.target.value })}
+                    onChange={(e) => setFormState({ ...formState, status: e.target.value as PatientStatus })}
                     style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
                     className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
                   >

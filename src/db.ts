@@ -1,10 +1,11 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+import fs from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import type { Attachment, Patient, PatientInput, PatientStatus, ReturningMatch, UserRole } from './shared/types';
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+export const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const DB_PATH = path.join(DATA_DIR, 'clinic.db');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -50,14 +51,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
 `);
 
-// Safe migration for existing databases created before file_number existed
-const columns = db.prepare('PRAGMA table_info(patients)').all();
+const columns = db.prepare('PRAGMA table_info(patients)').all() as Array<{ name: string }>;
 if (!columns.some((col) => col.name === 'file_number')) {
   db.exec("ALTER TABLE patients ADD COLUMN file_number TEXT NOT NULL DEFAULT '';");
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_patients_file_number ON patients(file_number);');
 
-function normalizeDigits(value) {
+export function normalizeDigits(value: unknown): string {
   if (!value) return '';
   const persian = '۰۱۲۳۴۵۶۷۸۹';
   const arabic = '٠١٢٣٤٥٦٧٨٩';
@@ -67,9 +67,17 @@ function normalizeDigits(value) {
     .trim();
 }
 
-function listPatients({ q = '', date = '', status = '' } = {}) {
-  const conditions = [];
-  const params = [];
+const VALID_STATUSES: PatientStatus[] = ['waiting', 'in_progress', 'visited', 'cancelled'];
+
+function normalizeStatus(value: unknown, fallback: PatientStatus = 'waiting'): PatientStatus {
+  return typeof value === 'string' && VALID_STATUSES.includes(value as PatientStatus)
+    ? (value as PatientStatus)
+    : fallback;
+}
+
+export function listPatients({ q = '', date = '', status = '' } = {}): Patient[] {
+  const conditions: string[] = [];
+  const params: string[] = [];
 
   if (date && date !== 'all') {
     conditions.push('p.visit_date = ?');
@@ -108,10 +116,10 @@ function listPatients({ q = '', date = '', status = '' } = {}) {
       p.id DESC
   `;
 
-  return db.prepare(sql).all(...params);
+  return db.prepare(sql).all(...params) as unknown as Patient[];
 }
 
-function getPatientById(id) {
+export function getPatientById(id: number | string): Patient | undefined {
   return db
     .prepare(`
       SELECT
@@ -120,10 +128,10 @@ function getPatientById(id) {
       FROM patients p
       WHERE p.id = ?
     `)
-    .get(Number(id));
+    .get(Number(id)) as unknown as Patient | undefined;
 }
 
-function createPatient(payload) {
+export function createPatient(payload: PatientInput): Patient {
   const now = new Date().toISOString();
   const fullName = String(payload.full_name || '').trim();
   if (!fullName) {
@@ -135,11 +143,9 @@ function createPatient(payload) {
   const nationalId = normalizeDigits(payload.national_id || '');
   const visitDate = String(payload.visit_date || now.slice(0, 10)).trim();
   const visitTime = normalizeDigits(payload.visit_time || '');
-  const status = ['waiting', 'in_progress', 'visited', 'cancelled'].includes(payload.status)
-    ? payload.status
-    : 'waiting';
+  const status = normalizeStatus(payload.status, 'waiting');
   const notes = String(payload.notes || '').trim();
-  const createdBy = payload.created_by === 'doctor' ? 'doctor' : 'secretary';
+  const createdBy: UserRole = payload.created_by === 'doctor' ? 'doctor' : 'secretary';
 
   const result = db
     .prepare(`
@@ -148,10 +154,10 @@ function createPatient(payload) {
     `)
     .run(fileNumber, fullName, phone, nationalId, visitDate, visitTime, status, notes, createdBy, now, now);
 
-  return getPatientById(result.lastInsertRowid);
+  return getPatientById(Number(result.lastInsertRowid))!;
 }
 
-function updatePatient(id, payload) {
+export function updatePatient(id: number | string, payload: Partial<PatientInput>): Patient | null {
   const existing = getPatientById(id);
   if (!existing) {
     return null;
@@ -167,10 +173,7 @@ function updatePatient(id, payload) {
   const nationalId = payload.national_id !== undefined ? normalizeDigits(payload.national_id) : existing.national_id;
   const visitDate = payload.visit_date !== undefined ? String(payload.visit_date).trim() : existing.visit_date;
   const visitTime = payload.visit_time !== undefined ? normalizeDigits(payload.visit_time) : existing.visit_time;
-  const status =
-    payload.status !== undefined && ['waiting', 'in_progress', 'visited', 'cancelled'].includes(payload.status)
-      ? payload.status
-      : existing.status;
+  const status = payload.status !== undefined ? normalizeStatus(payload.status, existing.status) : existing.status;
   const notes = payload.notes !== undefined ? String(payload.notes).trim() : existing.notes;
   const updatedAt = new Date().toISOString();
 
@@ -180,10 +183,10 @@ function updatePatient(id, payload) {
     WHERE id = ?
   `).run(fileNumber, fullName, phone, nationalId, visitDate, visitTime, status, notes, updatedAt, Number(id));
 
-  return getPatientById(id);
+  return getPatientById(id)!;
 }
 
-function lookupReturningPatients(q = '') {
+export function lookupReturningPatients(q = ''): ReturningMatch[] {
   const normalized = normalizeDigits(q);
   if (!normalized || normalized.length < 2) return [];
   const like = `%${normalized}%`;
@@ -196,10 +199,14 @@ function lookupReturningPatients(q = '') {
       ORDER BY latest_id DESC
       LIMIT 6
     `)
-    .all(like, like, like, like);
+    .all(like, like, like, like) as unknown as ReturningMatch[];
 }
 
-function createPatientsBulk(items = [], defaultDate = '', createdBy = 'secretary') {
+export function createPatientsBulk(
+  items: PatientInput[] = [],
+  defaultDate = '',
+  createdBy: UserRole = 'secretary'
+): number[] {
   const now = new Date().toISOString();
   const fallbackDate = defaultDate || now.slice(0, 10);
   const insertStmt = db.prepare(`
@@ -207,7 +214,7 @@ function createPatientsBulk(items = [], defaultDate = '', createdBy = 'secretary
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const created = [];
+  const created: number[] = [];
   db.exec('BEGIN');
   try {
     for (const item of items) {
@@ -218,11 +225,9 @@ function createPatientsBulk(items = [], defaultDate = '', createdBy = 'secretary
       const nationalId = normalizeDigits(item.national_id || '');
       const visitDate = String(item.visit_date || fallbackDate).trim();
       const visitTime = normalizeDigits(item.visit_time || '');
-      const status = ['waiting', 'in_progress', 'visited', 'cancelled'].includes(item.status)
-        ? item.status
-        : 'waiting';
+      const status = normalizeStatus(item.status, 'waiting');
       const notes = String(item.notes || '').trim();
-      const role = createdBy === 'doctor' ? 'doctor' : 'secretary';
+      const role: UserRole = createdBy === 'doctor' ? 'doctor' : 'secretary';
 
       const res = insertStmt.run(fileNumber, fullName, phone, nationalId, visitDate, visitTime, status, notes, role, now, now);
       created.push(Number(res.lastInsertRowid));
@@ -236,7 +241,7 @@ function createPatientsBulk(items = [], defaultDate = '', createdBy = 'secretary
   return created;
 }
 
-function deletePatient(id) {
+export function deletePatient(id: number | string): boolean {
   const existing = getPatientById(id);
   if (!existing) return false;
 
@@ -256,17 +261,25 @@ function deletePatient(id) {
   return true;
 }
 
-function listAttachments(patientId) {
+export function listAttachments(patientId: number | string): Attachment[] {
   return db
     .prepare('SELECT * FROM attachments WHERE patient_id = ? ORDER BY id DESC')
-    .all(Number(patientId));
+    .all(Number(patientId)) as unknown as Attachment[];
 }
 
-function getAttachmentById(attachmentId) {
-  return db.prepare('SELECT * FROM attachments WHERE id = ?').get(Number(attachmentId));
+export function getAttachmentById(attachmentId: number | string): Attachment | undefined {
+  return db.prepare('SELECT * FROM attachments WHERE id = ?').get(Number(attachmentId)) as unknown as Attachment | undefined;
 }
 
-function addAttachment({ patientId, originalName, storedName, mimeType, sizeBytes, title = '', uploadedBy = 'secretary' }) {
+export function addAttachment(input: {
+  patientId: number | string;
+  originalName: string;
+  storedName: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  title?: string;
+  uploadedBy?: string;
+}): Attachment {
   const now = new Date().toISOString();
   const result = db
     .prepare(`
@@ -274,20 +287,20 @@ function addAttachment({ patientId, originalName, storedName, mimeType, sizeByte
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
-      Number(patientId),
-      originalName,
-      storedName,
-      mimeType || 'application/octet-stream',
-      Number(sizeBytes) || 0,
-      String(title || '').trim(),
-      String(uploadedBy || 'secretary'),
+      Number(input.patientId),
+      input.originalName,
+      input.storedName,
+      input.mimeType || 'application/octet-stream',
+      Number(input.sizeBytes) || 0,
+      String(input.title || '').trim(),
+      String(input.uploadedBy || 'secretary'),
       now
     );
 
-  return getAttachmentById(result.lastInsertRowid);
+  return getAttachmentById(Number(result.lastInsertRowid))!;
 }
 
-function deleteAttachment(attachmentId) {
+export function deleteAttachment(attachmentId: number | string): boolean {
   const att = getAttachmentById(attachmentId);
   if (!att) return false;
   const filePath = path.join(UPLOADS_DIR, String(att.patient_id), att.stored_name);
@@ -298,7 +311,7 @@ function deleteAttachment(attachmentId) {
   return true;
 }
 
-function createBackup() {
+export function createBackup(): string {
   db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupFile = path.join(BACKUP_DIR, `clinic-${stamp}.db`);
@@ -317,24 +330,7 @@ function createBackup() {
   return backupFile;
 }
 
-function getDbPath() {
+export function getDbPath(): string {
   db.exec('PRAGMA wal_checkpoint(PASSIVE);');
   return DB_PATH;
 }
-
-module.exports = {
-  UPLOADS_DIR,
-  listPatients,
-  getPatientById,
-  createPatient,
-  updatePatient,
-  deletePatient,
-  lookupReturningPatients,
-  createPatientsBulk,
-  listAttachments,
-  getAttachmentById,
-  addAttachment,
-  deleteAttachment,
-  createBackup,
-  getDbPath,
-};

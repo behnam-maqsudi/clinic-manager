@@ -7,7 +7,7 @@ powershell -NoProfile -Command "$c = Get-NetTCPConnection -LocalPort 3000 -State
 set OPEN_FLAG=--open
 
 :loop
-node src\server.js %OPEN_FLAG%
+node dist-server\server.js %OPEN_FLAG%
 set OPEN_FLAG=
 if %errorlevel% equ 42 (
   timeout /t 1 /nobreak >nul

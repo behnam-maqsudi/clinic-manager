@@ -33,7 +33,7 @@ jobs:
         run: |
           $stage = "clinic-manager-win"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item -Path "src","public","dist","node_modules","package.json","package-lock.json","install.bat","start.bat","doctor-shortcut.bat","ClinicManager.vbs","README.md" -Destination $stage -Recurse -Force
+          Copy-Item -Path "dist-server","public","dist","node_modules","package.json","package-lock.json","install.bat","start.bat","doctor-shortcut.bat","ClinicManager.vbs","README.md" -Destination $stage -Recurse -Force
           Compress-Archive -Path "$stage\*" -DestinationPath "clinic-manager-windows-prebuilt.zip" -Force
 
       - name: Upload Release Asset
