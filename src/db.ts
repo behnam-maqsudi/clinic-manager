@@ -3,7 +3,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Attachment, Patient, PatientInput, PatientStatus, ReturningMatch, UserRole } from './shared/types';
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.CLINIC_DATA_DIR
+  ? path.resolve(process.env.CLINIC_DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 export const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const DB_PATH = path.join(DATA_DIR, 'clinic.db');

@@ -21,7 +21,9 @@ exports.getDbPath = getDbPath;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const node_sqlite_1 = require("node:sqlite");
-const DATA_DIR = node_path_1.default.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.CLINIC_DATA_DIR
+    ? node_path_1.default.resolve(process.env.CLINIC_DATA_DIR)
+    : node_path_1.default.join(__dirname, '..', 'data');
 const BACKUP_DIR = node_path_1.default.join(DATA_DIR, 'backups');
 exports.UPLOADS_DIR = node_path_1.default.join(DATA_DIR, 'uploads');
 const DB_PATH = node_path_1.default.join(DATA_DIR, 'clinic.db');
