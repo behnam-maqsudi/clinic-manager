@@ -1349,6 +1349,7 @@ export default function App() {
                     </div>
                   </div>
                   <button
+                    aria-label="تغییر حالت توسعه‌دهنده"
                     onClick={() => setDevMode(!devMode)}
                     className={`w-12 h-6 rounded-full transition-colors p-0.5 ${devMode ? 'bg-violet-600' : 'bg-slate-300'}`}
                   >
