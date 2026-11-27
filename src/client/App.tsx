@@ -8,6 +8,7 @@ import { usePatientsStore } from './store/usePatientsStore';
 import { useMessagesStore } from './store/useMessagesStore';
 import { useClinicSync } from './store/useClinicSync';
 import { formatShamsiDate, getTodayIso, STATUS_META, toPersianDigits } from './utils/clinicHelpers';
+import { logUiEvent } from './utils/debugLogger';
 import { MessagesModal } from './components/MessagesModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { LoginModal } from './components/LoginModal';
@@ -106,16 +107,19 @@ export default function App() {
   const detailOpenerRef = useRef<HTMLElement | null>(null);
 
   function openNewPatientModal() {
+    logUiEvent('App', 'open_new_patient_modal');
     setEditingPatient(null);
     setPatientModalOpen(true);
   }
 
   function openEditPatientModal(p: Patient) {
+    logUiEvent('App', 'open_edit_patient_modal', { patientId: p.id });
     setEditingPatient(p);
     setPatientModalOpen(true);
   }
 
   function openPatientDetails(p: Patient) {
+    logUiEvent('App', 'open_patient_details', { patientId: p.id });
     detailOpenerRef.current = document.activeElement as HTMLElement | null;
     setDetailPatient(p);
   }
@@ -157,6 +161,7 @@ export default function App() {
 
   async function removePatient(id: number) {
     if (!confirm('آیا از حذف این مراجعه‌کننده و مدارکش مطمئن هستید؟')) return;
+    logUiEvent('App', 'delete_patient', { patientId: id });
     try {
       const res = await fetch(`/api/patients/${id}`, { method: 'DELETE' });
       const data = await res.json();

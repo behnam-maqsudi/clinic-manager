@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Lock, LogIn, Stethoscope, UserCheck } from 'lucide-react';
 import type { UserRole } from '../../shared/types';
 import { useAppStore } from '../store/useAppStore';
+import { logUiEvent } from '../utils/debugLogger';
 
 export function LoginModal() {
   const setupState = useAppStore((s) => s.setupState);
@@ -28,6 +29,7 @@ export function LoginModal() {
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    logUiEvent('LoginModal', 'login_attempt', { role: selectedRole });
     setError('');
     setLoading(true);
     try {

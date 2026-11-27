@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageSquare, Send, Stethoscope, UserCheck, Wifi, X } from 'lucide-react';
 import type { ClinicMessage, UserRole } from '../../shared/types';
+import { logUiEvent } from '../utils/debugLogger';
 
 interface MessagesModalProps {
   open: boolean;
@@ -60,6 +61,7 @@ export function MessagesModal({
   async function handleSend(bodyToSend: string) {
     const clean = bodyToSend.trim();
     if (!clean || sending) return;
+    logUiEvent('MessagesModal', 'send_message', { role, length: clean.length });
     setSending(true);
     try {
       const ok = await onSendMessage(clean);

@@ -12,6 +12,7 @@ import {
   toIsoDateString,
   toPersianDigits,
 } from '../utils/clinicHelpers';
+import { logUiEvent } from '../utils/debugLogger';
 
 interface BulkImportModalProps {
   open: boolean;
@@ -38,6 +39,7 @@ export function BulkImportModal({ open, onClose }: BulkImportModalProps) {
   async function submitBulkImport() {
     const items =
       bulkTab === 'grid' ? bulkRows.filter((r) => r.full_name.trim()) : parsePasteLines(bulkPasteText);
+    logUiEvent('BulkImportModal', 'submit_bulk', { tab: bulkTab, count: items.length });
 
     if (items.length === 0) {
       notify('حداقل یک مراجعه‌کننده وارد کنید.');

@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { usePatientsStore } from '../../store/usePatientsStore';
 import { useMessagesStore } from '../../store/useMessagesStore';
 import { toPersianDigits } from '../../utils/clinicHelpers';
+import { logUiEvent } from '../../utils/debugLogger';
 
 interface ServerBackupItem {
   name: string;
@@ -45,6 +46,7 @@ export function BackupTab() {
   }
 
   async function createServerBackup() {
+    logUiEvent('BackupTab', 'create_server_backup');
     setImportError('');
     try {
       const res = await fetch('/api/backup/create', { method: 'POST' });

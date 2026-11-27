@@ -221,20 +221,22 @@ export function NetworkConnectSection({
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={isSending}
-                      onClick={() => sendConnectionRequest(peer.url)}
-                      style={{ backgroundColor: 'var(--accent)' }}
-                      className="px-3 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-60"
-                    >
-                      <Send className="w-3 h-3" />
-                      {isSending
-                        ? 'در حال ارسال...'
-                        : isPrimaryHost
-                          ? 'دعوت به اتصال'
-                          : 'درخواست اتصال'}
-                    </button>
+                    {!isPeerConnected && (
+                      <button
+                        type="button"
+                        disabled={isSending}
+                        onClick={() => sendConnectionRequest(peer.url)}
+                        style={{ backgroundColor: 'var(--accent)' }}
+                        className="px-3 py-1.5 rounded-lg text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <Send className="w-3 h-3" />
+                        {isSending
+                          ? 'در حال ارسال...'
+                          : isPrimaryHost
+                            ? 'دعوت به اتصال'
+                            : 'درخواست اتصال'}
+                      </button>
+                    )}
                   </div>
                 );
               })

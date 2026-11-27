@@ -193,6 +193,7 @@ app.get('/api/events', (req, res) => {
     const nextCount = Math.max(0, (activeSseByIp.get(clientIp) || 1) - 1);
     if (nextCount === 0) {
       activeSseByIp.delete(clientIp);
+      connectedPeerIps.delete(clientIp);
     } else {
       activeSseByIp.set(clientIp, nextCount);
     }
