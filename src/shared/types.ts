@@ -70,6 +70,7 @@ export interface HealthInfo {
   ok: boolean;
   clinic: string;
   hostname?: string;
+  isSetupCompleted?: boolean;
   port: number;
   lanIps: string[];
   urls: string[];
@@ -100,12 +101,14 @@ export interface DiscoveredPeer {
   url: string;
   clinic: string;
   hostname: string;
+  isSetupCompleted?: boolean;
+  isConnected?: boolean;
   port: number;
   isSelf: boolean;
 }
 
 export interface ClinicSetupState {
   setupCompleted: boolean;
-  primaryRole: UserRole | null;
   hasDoctorPin: boolean;
+  hasSecretaryPin: boolean;
 }

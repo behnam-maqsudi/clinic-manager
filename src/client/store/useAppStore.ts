@@ -1,28 +1,36 @@
 import { create } from 'zustand';
 import type { ClinicSetupState, UserRole } from '../../shared/types';
 import { playGentleChime, THEMES } from '../utils/clinicHelpers';
+import { sendClientLog } from '../utils/debugLogger';
+import { withStoreLogger } from './withLogger';
 
 export interface InviteBannerData {
   fromName: string;
   fromUrl: string;
   message: string;
+  requestType?: 'host_invite' | 'join_request' | 'approved';
 }
 
 interface AppState {
   role: UserRole;
+  isAuthenticated: boolean;
   doctorToken: string;
   theme: string;
   devMode: boolean;
   setupState: ClinicSetupState;
+  remoteHostUrl: string;
   sseConnected: boolean;
   clientId: string;
   toast: string;
   callBanner: string;
   inviteBanner: InviteBannerData | null;
+  connectedPeerIps: string[];
   devNetworkOffline: boolean;
 
   setRole: (role: UserRole) => void;
   setDoctorToken: (token: string) => void;
+  loginSuccess: (role: UserRole, doctorToken?: string) => void;
+  logout: () => void;
   setTheme: (theme: string) => void;
   setDevMode: (devMode: boolean) => void;
   setDevNetworkOffline: (offline: boolean) => void;
@@ -30,6 +38,8 @@ interface AppState {
   setSseConnected: (connected: boolean) => void;
   setCallBanner: (msg: string) => void;
   setInviteBanner: (banner: InviteBannerData | null) => void;
+  setConnectedPeerIps: (ips: string[]) => void;
+  addConnectedPeerIp: (ip: string) => void;
   notify: (msg: string) => void;
   triggerCallAlert: (msg: string) => void;
   connectToRemoteUrl: (rawUrl: string) => void;
@@ -51,17 +61,21 @@ const initialClientId =
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>(
+  withStoreLogger('App', (set, get) => ({
   role: initialRole,
+  isAuthenticated: localStorage.getItem('clinic_logged_in') === 'true',
   doctorToken: localStorage.getItem('clinic_doctor_token') || '',
   theme: initialTheme,
   devMode: localStorage.getItem('clinic_dev_mode') === 'true',
-  setupState: { setupCompleted: true, primaryRole: null, hasDoctorPin: false },
+  setupState: { setupCompleted: true, hasDoctorPin: false, hasSecretaryPin: false },
+  remoteHostUrl: '',
   sseConnected: false,
   clientId: initialClientId,
   toast: '',
   callBanner: '',
   inviteBanner: null,
+  connectedPeerIps: [],
   devNetworkOffline: false,
 
   setRole: (role) => {
@@ -83,6 +97,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ doctorToken });
   },
 
+  loginSuccess: (role, doctorToken = '') => {
+    localStorage.setItem('clinic_role', role);
+    localStorage.setItem('clinic_logged_in', 'true');
+    if (role === 'doctor' && doctorToken) {
+      localStorage.setItem('clinic_doctor_token', doctorToken);
+    } else {
+      localStorage.removeItem('clinic_doctor_token');
+    }
+    sendClientLog('STATE', 'loginSuccess', { role, hasToken: Boolean(doctorToken) });
+    set({ role, isAuthenticated: true, doctorToken: role === 'doctor' ? doctorToken : '' });
+  },
+
+  logout: () => {
+    localStorage.removeItem('clinic_logged_in');
+    localStorage.removeItem('clinic_doctor_token');
+    sendClientLog('STATE', 'logout');
+    set({ isAuthenticated: false, doctorToken: '' });
+  },
+
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('clinic_theme', theme);
@@ -100,6 +133,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSseConnected: (sseConnected) => set({ sseConnected }),
   setCallBanner: (callBanner) => set({ callBanner }),
   setInviteBanner: (inviteBanner) => set({ inviteBanner }),
+  setConnectedPeerIps: (connectedPeerIps) => set({ connectedPeerIps }),
+  addConnectedPeerIp: (ip) =>
+    set((s) => (ip && !s.connectedPeerIps.includes(ip) ? { connectedPeerIps: [...s.connectedPeerIps, ip] } : s)),
 
   notify: (msg) => {
     set({ toast: msg });
@@ -114,16 +150,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     callTimer = window.setTimeout(() => set({ callBanner: '' }), 6000);
   },
 
-  connectToRemoteUrl: (rawUrl) => {
+  connectToRemoteUrl: async (rawUrl) => {
     const raw = rawUrl.trim();
     if (!raw) return;
     const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    try {
+      await fetch('/api/network/notify-accepted', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUrl: normalized }),
+      });
+    } catch {}
     if (window.clinicDesktop?.isElectron) {
       window.clinicDesktop.setRemoteUrl(normalized);
     } else {
       navigator.clipboard?.writeText(normalized).catch(() => {});
       window.open(normalized, '_blank', 'noopener,noreferrer');
-      get().notify(`آدرس سرور (${normalized}) باز و کپی شد.`);
+      get().notify('به سیستم اصلی مطب متصل شدید.');
     }
   },
 
@@ -136,38 +179,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadSetupState: async () => {
+    const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalHost && window.clinicDesktop?.isElectron) {
+      window.clinicDesktop
+        .getRemoteUrl()
+        .then((u) => set({ remoteHostUrl: u || '' }))
+        .catch(() => {});
+    } else {
+      set({ remoteHostUrl: '' });
+    }
     try {
       const res = await fetch('/api/setup');
       const data = await res.json();
       if (data.ok) {
-        const nextSetup = {
+        const nextSetup: ClinicSetupState = {
           setupCompleted: Boolean(data.setupCompleted),
-          primaryRole: data.primaryRole || null,
           hasDoctorPin: Boolean(data.hasDoctorPin),
+          hasSecretaryPin: Boolean(data.hasSecretaryPin),
         };
         set({ setupState: nextSetup });
 
-        // Prevent localStorage tampering: verify doctorToken if role is doctor
-        const { role, doctorToken, devMode, setRole, setDoctorToken } = get();
-        if (nextSetup.setupCompleted && role === 'doctor' && !devMode) {
-          if (nextSetup.hasDoctorPin) {
-            if (!doctorToken) {
-              setRole('secretary');
-            } else {
-              const vRes = await fetch('/api/auth/verify-token', {
-                headers: { 'x-doctor-token': doctorToken },
-              });
-              const vData = await vRes.json();
-              if (!vData.valid) {
-                setDoctorToken('');
-                setRole('secretary');
-              }
+        const { role, isAuthenticated, doctorToken, devMode, logout } = get();
+        if (nextSetup.setupCompleted && isAuthenticated && role === 'doctor' && nextSetup.hasDoctorPin && !devMode) {
+          if (!doctorToken) {
+            logout();
+          } else {
+            const vRes = await fetch('/api/auth/verify-token', {
+              headers: { 'x-doctor-token': doctorToken },
+            });
+            const vData = await vRes.json();
+            if (!vData.valid) {
+              logout();
             }
-          } else if (nextSetup.primaryRole === 'secretary') {
-            setRole('secretary');
           }
         }
       }
     } catch {}
   },
-}));
+}))
+);

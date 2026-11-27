@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ClinicMessage, UserRole } from '../../shared/types';
 import { useAppStore } from './useAppStore';
+import { withStoreLogger } from './withLogger';
 
 interface MessagesState {
   messages: ClinicMessage[];
@@ -14,7 +15,8 @@ interface MessagesState {
   sendChatMessage: (body: string) => Promise<boolean>;
 }
 
-export const useMessagesStore = create<MessagesState>((set, get) => ({
+export const useMessagesStore = create<MessagesState>(
+  withStoreLogger('Messages', (set, get) => ({
   messages: [],
   messagesModalOpen: false,
 
@@ -82,4 +84,5 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
       return false;
     }
   },
-}));
+}))
+);

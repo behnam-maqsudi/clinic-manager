@@ -165,7 +165,7 @@ export function MessagesModal({
                           style={{ backgroundColor: 'var(--accent)' }}
                           className="px-3 py-1 rounded-lg text-white text-[11px] font-semibold"
                         >
-                          اتصال به {msg.meta.fromUrl}
+                          اتصال به سیستم اصلی
                         </button>
                       </div>
                     )}

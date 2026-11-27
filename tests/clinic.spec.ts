@@ -16,30 +16,33 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     page.on('console', (msg) => {
       if (msg.type() === 'error') errors.push(msg.text());
     });
+    page.on('response', (res) => {
+      if (res.status() >= 500) errors.push(`HTTP ${res.status()} ${res.url()}`);
+    });
 
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'مطب دکتر بهامین جهانیان' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'شبکه مطب' })).toHaveCount(0);
 
-    // Complete initial Setup Wizard if DB is fresh
+    // Complete initial Setup Wizard (Primary System mode) & switch to Secretary via Login screen
     const setupHeading = page.getByText('راه‌اندازی اولیه سامانه مطب');
     if (await setupHeading.isVisible({ timeout: 1000 }).catch(() => false)) {
-      // Secretary setup must NOT show Doctor PIN inputs
-      await page.getByRole('button', { name: /سیستم منشی/ }).click();
-      await expect(page.getByPlaceholder('مثلاً 1234')).toHaveCount(0);
+      await page.getByRole('button', { name: /سیستم فرعی/ }).click();
+      await expect(page.getByRole('button', { name: /جستجوی سیستم اصلی/ })).toBeVisible();
 
-      // Set up as Doctor with PIN 1234, then switch to Secretary so flow tests PIN switch
-      await page.getByRole('button', { name: /سیستم پزشک/ }).click();
+      await page.getByRole('button', { name: /این سیستم اصلی است/ }).click();
       await page.getByPlaceholder('مثلاً 1234').fill('1234');
-      await page.getByPlaceholder('تکرار رمز عبور').fill('1234');
-      await page.getByRole('button', { name: 'تأیید و شروع کار' }).click();
+      await page.getByPlaceholder('تکرار رمز عبور پزشک').fill('1234');
+      await page.getByRole('button', { name: 'راه‌اندازی سیستم اصلی' }).click();
       await expect(setupHeading).toHaveCount(0);
+      await expect(page.getByText('پنل پزشک')).toBeVisible();
+      await expect(page.getByText('سیستم اصلی', { exact: true })).toBeVisible();
 
-      await page.getByRole('button', { name: 'تنظیمات' }).click();
-      await page.getByPlaceholder('رمز عبور پزشک').fill('1234');
-      await page.getByRole('button', { name: 'تغییر به منشی' }).click();
+      // Logout and log in as Secretary
+      await page.getByRole('button', { name: 'خروج از حساب' }).click();
+      await expect(page.getByText('ورود به سامانه مطب')).toBeVisible();
+      await page.getByRole('button', { name: 'ورود به‌عنوان منشی' }).click();
       await expect(page.getByText('پنل منشی')).toBeVisible();
-      await page.locator('.fixed').getByRole('button').first().click();
     }
 
     // 1. Create patient with file_number + quick note chip
@@ -83,18 +86,16 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await page.getByRole('button', { name: 'پاک کردن فیلتر تاریخ' }).click();
     await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toBeVisible();
 
-    // 3. Doctor role (via PIN in Settings) + status progression
-    await page.getByRole('button', { name: 'تنظیمات' }).click();
-    const pinInput = page.getByPlaceholder('رمز عبور پزشک');
-    if (await pinInput.isVisible().catch(() => false)) {
-      await pinInput.fill('0000');
-      await page.getByRole('button', { name: 'تغییر به پزشک' }).click();
-      await expect(page.getByText('رمز عبور پزشک اشتباه است.')).toBeVisible();
-      await pinInput.fill('1234');
-    }
-    await page.getByRole('button', { name: 'تغییر به پزشک' }).click();
+    // 3. Doctor role (via Logout -> Login with PIN) + status progression
+    await page.getByRole('button', { name: 'خروج از حساب' }).click();
+    await page.getByRole('button', { name: /پزشک \(مدیر\)/ }).click();
+    const loginPinInput = page.getByPlaceholder('رمز عبور را وارد کنید...');
+    await loginPinInput.fill('0000');
+    await page.getByRole('button', { name: 'ورود به‌عنوان پزشک' }).click();
+    await expect(page.getByText('رمز عبور پزشک اشتباه است.')).toBeVisible();
+    await loginPinInput.fill('1234');
+    await page.getByRole('button', { name: 'ورود به‌عنوان پزشک' }).click();
     await expect(page.getByText('پنل پزشک')).toBeVisible();
-    await page.locator('.fixed').getByRole('button').first().click();
 
     const row = page.locator('tr', { hasText: 'تست E2E علی رضایی' });
     await row.getByRole('button', { name: 'شروع ویزیت' }).click();
@@ -164,15 +165,10 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await expect(page.getByText('بیمار بعدی را بفرستید').first()).toBeVisible();
     await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
 
-    // Switch to Secretary (via PIN in Settings) -> should see unread badge and reply
-    await page.getByRole('button', { name: 'تنظیمات' }).click();
-    const secPinInput = page.getByPlaceholder('رمز عبور پزشک');
-    if (await secPinInput.isVisible().catch(() => false)) {
-      await secPinInput.fill('1234');
-    }
-    await page.getByRole('button', { name: 'تغییر به منشی' }).click();
+    // Switch to Secretary (via Logout -> Login) -> should see unread badge and reply
+    await page.getByRole('button', { name: 'خروج از حساب' }).click();
+    await page.getByRole('button', { name: 'ورود به‌عنوان منشی' }).click();
     await expect(page.getByText('پنل منشی')).toBeVisible();
-    await page.locator('.fixed').getByRole('button').first().click();
 
     await page.getByRole('button', { name: /پیام‌ها/ }).click();
     await page.getByPlaceholder('پیام به پزشک بنویسید...').fill('بیمار آماده ورود است');
@@ -183,8 +179,8 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     // 6.6. LAN Discovery & Backup/Import tab in Settings + incoming connection invite banner via SSE
     await page.getByRole('button', { name: 'تنظیمات' }).click();
     await page.getByRole('button', { name: 'شبکه و اتصال' }).click();
-    await page.getByRole('button', { name: 'جستجو در شبکه' }).click();
-    await expect(page.getByRole('button', { name: 'جستجو در شبکه' })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: /اضافه کردن سیستم منشی|جستجوی سیستم اصلی/ }).click();
+    await expect(page.getByRole('button', { name: /اضافه کردن سیستم منشی|جستجوی سیستم اصلی/ })).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'بکاپ و دیتابیس' }).click();
     await expect(page.getByText('ایمپورت و بازیابی دیتابیس')).toBeVisible();
@@ -226,6 +222,23 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     // 6.8. Verify unauthenticated reset-setup is blocked (403) when doctor PIN is set
     const unauthReset = await page.request.post('/api/dev/reset-setup');
     expect(unauthReset.status()).toBe(403);
+
+    // 6.9. Verify Debug File Logger (toggle on, batch append, status, download, clear, toggle off)
+    const logToggleOn = await page.request.post('/api/dev/logs/toggle', { data: { enabled: true } });
+    expect(logToggleOn.ok()).toBe(true);
+    await page.request.post('/api/dev/logs/append', {
+      data: {
+        entries: [{ level: 'STATE', source: 'STORE:App', message: 'e2e test log entry' }],
+      },
+    });
+    const logStatus = await (await page.request.get('/api/dev/logs/status')).json();
+    expect(logStatus.enabled).toBe(true);
+    expect(logStatus.lineCount).toBeGreaterThan(0);
+    const logDownload = await page.request.get('/api/dev/logs/download');
+    expect(logDownload.ok()).toBe(true);
+    expect(await logDownload.text()).toContain('e2e test log entry');
+    await page.request.post('/api/dev/logs/clear');
+    await page.request.post('/api/dev/logs/toggle', { data: { enabled: false } });
 
     // 7. Cleanup test patients via API so DB stays clean
     const listRes = await page.request.get('/api/patients?date=all&q=تست E2E');

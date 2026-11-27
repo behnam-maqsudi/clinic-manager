@@ -8,6 +8,7 @@ import multer from 'multer';
 import QRCode from 'qrcode';
 
 import * as db from './db';
+import * as debugLogger from './debug-logger';
 import { applyGitUpdate, getGitStatus } from './git-updater';
 import type { Attachment, DiscoveredPeer } from './shared/types';
 
@@ -18,14 +19,58 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+
+app.use((req, res, next) => {
+  if (
+    !debugLogger.isDebugLoggingEnabled() ||
+    req.path.startsWith('/api/dev/logs') ||
+    req.path.startsWith('/assets/') ||
+    req.path === '/icon.svg' ||
+    req.path === '/manifest.webmanifest'
+  ) {
+    return next();
+  }
+  const start = Date.now();
+  const ip = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
+  res.on('finish', () => {
+    const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
+    debugLogger.appendDebugLog(
+      'HTTP',
+      `[${ip}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`,
+      undefined,
+      level
+    );
+  });
+  next();
+});
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
 }
 app.use(express.static(PUBLIC_DIR));
 
 const sseClients = new Set<Response>();
+const activeSseByIp = new Map<string, number>();
+const connectedPeerIps = new Map<string, { hostname: string; connectedAt: string }>();
+
+function normalizeRemoteIp(rawIp: string | undefined): string {
+  const ip = String(rawIp || '').replace(/^::ffff:/, '');
+  return ip === '::1' ? '127.0.0.1' : ip;
+}
+
+function getRemoteConnectedIps(): string[] {
+  const selfIps = new Set(['127.0.0.1', ...getLanIps()]);
+  const result = new Set<string>();
+  for (const [ip, count] of activeSseByIp.entries()) {
+    if (count > 0 && !selfIps.has(ip)) result.add(ip);
+  }
+  for (const ip of connectedPeerIps.keys()) {
+    if (!selfIps.has(ip)) result.add(ip);
+  }
+  return Array.from(result);
+}
 
 function broadcastEvent(event: string, data: Record<string, unknown> = {}) {
+  debugLogger.appendDebugLog('SSE_BROADCAST', event, data, 'EVENT');
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) {
     try {
@@ -125,8 +170,13 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+  const clientIp = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
+  activeSseByIp.set(clientIp, (activeSseByIp.get(clientIp) || 0) + 1);
+  debugLogger.appendDebugLog('SSE_CONNECT', `Client connected from ${clientIp}`, { remoteIps: getRemoteConnectedIps() });
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, connectedIps: getRemoteConnectedIps() })}\n\n`);
   sseClients.add(res);
+  broadcastEvent('peers_changed', { connectedIps: getRemoteConnectedIps() });
 
   const heartbeat = setInterval(() => {
     try {
@@ -140,6 +190,14 @@ app.get('/api/events', (req, res) => {
   req.on('close', () => {
     clearInterval(heartbeat);
     sseClients.delete(res);
+    const nextCount = Math.max(0, (activeSseByIp.get(clientIp) || 1) - 1);
+    if (nextCount === 0) {
+      activeSseByIp.delete(clientIp);
+    } else {
+      activeSseByIp.set(clientIp, nextCount);
+    }
+    debugLogger.appendDebugLog('SSE_DISCONNECT', `Client disconnected from ${clientIp}`, { remoteIps: getRemoteConnectedIps() });
+    broadcastEvent('peers_changed', { connectedIps: getRemoteConnectedIps() });
   });
 });
 
@@ -150,6 +208,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     clinic: 'مطب دکتر بهامین جهانیان',
     hostname: os.hostname(),
+    isSetupCompleted: db.getSetupState().setupCompleted,
     port: PORT,
     lanIps,
     urls: lanIps.map((ip) => `http://${ip}:${PORT}`),
@@ -191,6 +250,7 @@ app.get('/api/network/discover', async (_req, res) => {
             ok?: boolean;
             clinic?: string;
             hostname?: string;
+            isSetupCompleted?: boolean;
             port?: number;
           };
           if (!data?.ok || !data?.clinic) return null;
@@ -199,6 +259,8 @@ app.get('/api/network/discover', async (_req, res) => {
             url,
             clinic: data.clinic,
             hostname: data.hostname || ip,
+            isSetupCompleted: Boolean(data.isSetupCompleted),
+            isConnected: connectedPeerIps.has(ip) || (activeSseByIp.get(ip) || 0) > 0,
             port: Number(data.port) || PORT,
             isSelf: selfIpSet.has(ip),
           };
@@ -218,19 +280,28 @@ app.get('/api/network/discover', async (_req, res) => {
 
 app.post('/api/network/invite', (req, res) => {
   try {
-    const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '' } = req.body || {};
+    const {
+      fromName = '',
+      fromUrl = '',
+      fromRole = 'secretary',
+      message = '',
+      senderClientId = '',
+      requestType = 'host_invite',
+    } = req.body || {};
     const senderLabel = String(fromName || '').trim() || 'سیستم همکار در شبکه';
     const cleanUrl = String(fromUrl || '').trim();
     const cleanMsg =
       String(message || '').trim() ||
-      `درخواست اتصال از طرف «${senderLabel}»${cleanUrl ? ` (${cleanUrl})` : ''}`;
+      (requestType === 'join_request'
+        ? `دستگاه «${senderLabel}» درخواست اتصال به سیستم اصلی را دارد.`
+        : `دعوت اتصال از طرف «${senderLabel}»`);
 
     const saved = db.createMessage({
       sender_role: fromRole === 'doctor' ? 'doctor' : 'secretary',
       recipient_role: 'all',
       body: cleanMsg,
       kind: 'connection_invite',
-      meta: { fromName: senderLabel, fromUrl: cleanUrl },
+      meta: { fromName: senderLabel, fromUrl: cleanUrl, requestType },
     });
 
     broadcastEvent('new_message', saved as unknown as Record<string, unknown>);
@@ -239,6 +310,7 @@ app.post('/api/network/invite', (req, res) => {
       fromName: senderLabel,
       fromUrl: cleanUrl,
       fromRole,
+      requestType,
       senderClientId: String(senderClientId || ''),
       message: cleanMsg,
       created_at: saved.created_at,
@@ -258,6 +330,7 @@ app.post('/api/network/send-invite', async (req, res) => {
       fromRole = 'secretary',
       message = '',
       senderClientId = '',
+      requestType = 'host_invite',
     } = req.body || {};
     const cleanTarget = String(targetUrl || '').trim().replace(/\/+$/, '');
     let parsed: URL;
@@ -281,8 +354,9 @@ app.post('/api/network/send-invite', async (req, res) => {
         fromName: senderName,
         fromUrl: selfUrl,
         fromRole,
+        requestType,
         senderClientId: String(senderClientId || ''),
-        message: String(message || '').trim() || `لطفاً به سیستم مطب (${selfUrl}) متصل شوید.`,
+        message: String(message || '').trim(),
       }),
       signal: AbortSignal.timeout(3500),
     });
@@ -299,6 +373,35 @@ app.post('/api/network/send-invite', async (req, res) => {
   }
 });
 
+app.post('/api/network/peer-connected', (req, res) => {
+  const ip = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
+  const hostname = String(req.body?.hostname || '').trim() || ip || 'سیستم فرعی';
+  if (ip) {
+    connectedPeerIps.set(ip, { hostname, connectedAt: new Date().toISOString() });
+  }
+  debugLogger.appendDebugLog('PEER_CONNECTED', `${hostname} (${ip})`, { connectedIps: getRemoteConnectedIps() });
+  broadcastEvent('peer_connected', { ip, hostname, connectedIps: getRemoteConnectedIps() });
+  broadcastEvent('peers_changed', { connectedIps: getRemoteConnectedIps() });
+  return res.json({ ok: true });
+});
+
+app.post('/api/network/notify-accepted', async (req, res) => {
+  const rawTarget = String(req.body?.targetUrl || '').trim().replace(/\/+$/, '');
+  try {
+    const parsed = new URL(rawTarget);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return res.status(400).json({ ok: false });
+    }
+    await fetch(`${rawTarget}/api/network/peer-connected`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostname: os.hostname() }),
+      signal: AbortSignal.timeout(1500),
+    });
+  } catch { }
+  return res.json({ ok: true });
+});
+
 // --- Initial Setup & Role PIN Auth ---
 app.get('/api/setup', (_req, res) => {
   res.json({ ok: true, ...db.getSetupState() });
@@ -307,7 +410,7 @@ app.get('/api/setup', (_req, res) => {
 app.post('/api/setup', (req, res) => {
   try {
     const current = db.getSetupState();
-    const { primaryRole = 'doctor', doctorPin = '', currentPin = '' } = req.body || {};
+    const { doctorPin = '', secretaryPin = '', currentPin = '' } = req.body || {};
     const headerToken = req.get('x-doctor-token');
     if (
       current.setupCompleted &&
@@ -317,17 +420,31 @@ app.post('/api/setup', (req, res) => {
     ) {
       return res.status(401).json({ ok: false, message: 'برای تغییر تنظیمات اولیه، رمز فعلی پزشک الزامی است.' });
     }
-    const role = primaryRole === 'secretary' ? 'secretary' : 'doctor';
     const state = db.completeSetup({
-      primaryRole: role,
-      doctorPin: role === 'doctor' ? String(doctorPin || '') : undefined,
+      doctorPin: String(doctorPin || ''),
+      secretaryPin: String(secretaryPin || ''),
     });
-    const doctorToken = role === 'doctor' ? db.issueDoctorToken() : '';
+    const doctorToken = db.issueDoctorToken();
     broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
     return res.json({ ok: true, ...state, doctorToken });
   } catch (err) {
     return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const role = req.body?.role === 'doctor' ? 'doctor' : 'secretary';
+  const pin = String(req.body?.pin || '');
+  if (role === 'doctor') {
+    if (!db.verifyDoctorPin(pin)) {
+      return res.json({ ok: false, message: 'رمز عبور پزشک اشتباه است.' });
+    }
+    return res.json({ ok: true, role: 'doctor', doctorToken: db.issueDoctorToken() });
+  }
+  if (!db.verifySecretaryPin(pin)) {
+    return res.json({ ok: false, message: 'رمز عبور منشی اشتباه است.' });
+  }
+  return res.json({ ok: true, role: 'secretary', doctorToken: '' });
 });
 
 app.post('/api/auth/verify-pin', (req, res) => {
@@ -355,6 +472,55 @@ app.post('/api/dev/reset-setup', (req, res) => {
   const state = db.resetSetupState();
   broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
   return res.json({ ok: true, ...state });
+});
+
+app.post('/api/dev/factory-reset', (req, res) => {
+  const current = db.getSetupState();
+  const isDevRequest = req.get('x-dev-mode') === 'true';
+  const hasValidToken = db.verifyDoctorToken(req.get('x-doctor-token'));
+  if (current.hasDoctorPin && !isDevRequest && !hasValidToken) {
+    return res.status(403).json({ ok: false, message: 'دسترسی غیرمجاز برای ریست کامل.' });
+  }
+  const state = db.factoryResetDev();
+  broadcastEvent('patients_changed', { action: 'factory_reset' });
+  broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
+  return res.json({ ok: true, ...state });
+});
+
+// --- Debug File Logging ---
+app.get('/api/dev/logs/status', (_req, res) => {
+  return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
+});
+
+app.post('/api/dev/logs/toggle', (req, res) => {
+  const next = Boolean(req.body?.enabled);
+  debugLogger.setDebugLoggingEnabled(next);
+  return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
+});
+
+app.post('/api/dev/logs/append', (req, res) => {
+  if (Array.isArray(req.body?.entries)) {
+    debugLogger.appendDebugBatch(req.body.entries);
+    return res.json({ ok: true });
+  }
+  const source = String(req.body?.source || 'CLIENT');
+  const message = String(req.body?.message || '');
+  const level = req.body?.level || 'INFO';
+  if (message) {
+    debugLogger.appendDebugLog(source, message, req.body?.meta, level);
+  }
+  return res.json({ ok: true });
+});
+
+app.post('/api/dev/logs/clear', (_req, res) => {
+  debugLogger.clearDebugLogs();
+  return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
+});
+
+app.get('/api/dev/logs/download', (_req, res) => {
+  const logPath = debugLogger.getDebugLogPath();
+  const stamp = new Date().toISOString().slice(0, 10);
+  return res.download(logPath, `clinic-debug-${stamp}.log`);
 });
 
 // --- Doctor <-> Secretary Messaging ---

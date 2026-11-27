@@ -30,6 +30,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 function initSchema(database: DatabaseSync) {
   database.exec(`
     PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 3000;
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS patients (
@@ -600,26 +601,38 @@ export function verifyDoctorToken(token: string | undefined): boolean {
 
 export function getSetupState(): ClinicSetupState {
   const setupCompleted = getSetting('setup_completed') === 'true';
-  const rawRole = getSetting('primary_role');
-  const primaryRole: UserRole | null = rawRole === 'doctor' || rawRole === 'secretary' ? rawRole : null;
   const hasDoctorPin = Boolean(getSetting('doctor_pin_hash'));
-  return { setupCompleted, primaryRole, hasDoctorPin };
+  const hasSecretaryPin = Boolean(getSetting('secretary_pin_hash'));
+  return { setupCompleted, hasDoctorPin, hasSecretaryPin };
 }
 
-export function completeSetup(input: { primaryRole: UserRole; doctorPin?: string }): ClinicSetupState {
-  const role: UserRole = input.primaryRole === 'secretary' ? 'secretary' : 'doctor';
-  if (role === 'doctor') {
-    const pin = String(input.doctorPin || '').trim();
-    if (pin.length < 4) {
-      throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
-    }
-    setSetting('doctor_pin_hash', hashPin(pin));
-  } else {
-    db.prepare("DELETE FROM clinic_settings WHERE key = 'doctor_pin_hash'").run();
+export function completeSetup(input: { doctorPin: string; secretaryPin?: string }): ClinicSetupState {
+  const pin = String(input.doctorPin || '').trim();
+  if (pin.length < 4) {
+    throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
   }
-  setSetting('primary_role', role);
+  setSetting('doctor_pin_hash', hashPin(pin));
+
+  const secPin = String(input.secretaryPin || '').trim();
+  if (secPin.length > 0) {
+    setSetting('secretary_pin_hash', hashPin(secPin));
+  } else {
+    db.prepare("DELETE FROM clinic_settings WHERE key = 'secretary_pin_hash'").run();
+  }
+
   setSetting('setup_completed', 'true');
   return getSetupState();
+}
+
+export function verifySecretaryPin(pin: string): boolean {
+  const stored = getSetting('secretary_pin_hash');
+  if (!stored) return true;
+  const [salt, expectedHex] = stored.split(':');
+  if (!salt || !expectedHex) return false;
+  const actualHex = crypto.scryptSync(String(pin || '').trim(), salt, 32).toString('hex');
+  const a = Buffer.from(expectedHex, 'hex');
+  const b = Buffer.from(actualHex, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 export function verifyDoctorPin(pin: string): boolean {
@@ -634,6 +647,21 @@ export function verifyDoctorPin(pin: string): boolean {
 }
 
 export function resetSetupState(): ClinicSetupState {
-  db.prepare("DELETE FROM clinic_settings WHERE key IN ('setup_completed', 'primary_role', 'doctor_pin_hash')").run();
+  db.prepare("DELETE FROM clinic_settings WHERE key IN ('setup_completed', 'primary_role', 'doctor_pin_hash', 'secretary_pin_hash')").run();
+  return getSetupState();
+}
+
+export function factoryResetDev(): ClinicSetupState {
+  db.exec(`
+    DELETE FROM attachments;
+    DELETE FROM patients;
+    DELETE FROM clinic_messages;
+    DELETE FROM clinic_settings;
+  `);
+  if (fs.existsSync(UPLOADS_DIR)) {
+    for (const entry of fs.readdirSync(UPLOADS_DIR)) {
+      fs.rmSync(path.join(UPLOADS_DIR, entry), { recursive: true, force: true });
+    }
+  }
   return getSetupState();
 }

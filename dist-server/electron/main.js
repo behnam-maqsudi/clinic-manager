@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const electron_1 = require("electron");
+const debug_logger_1 = require("../debug-logger");
 let mainWindow = null;
 let closeServer = null;
 function getConfigPath() {
@@ -115,14 +116,42 @@ async function createWindow() {
         electron_1.shell.openExternal(url);
         return { action: 'deny' };
     });
-    mainWindow.webContents.on('did-fail-load', async (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
-        // If remote server is unreachable on main frame, fall back to local server so user isn't stuck
-        if (isMainFrame && readRemoteUrl()) {
-            const port = await ensureLocalServer();
-            mainWindow?.loadURL(`http://localhost:${port}`);
+    let isFallingBack = false;
+    mainWindow.webContents.on('did-fail-load', async (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        (0, debug_logger_1.appendDebugLog)('ELECTRON', `did-fail-load (${errorCode}): ${errorDescription}`, { validatedURL, isMainFrame }, 'WARN');
+        // Ignore ERR_ABORTED (-3) caused by intentional redirects/navigations
+        if (errorCode === -3 || isFallingBack)
+            return;
+        if (isMainFrame && readRemoteUrl() && validatedURL && !validatedURL.startsWith('http://localhost:')) {
+            isFallingBack = true;
+            try {
+                const port = await ensureLocalServer();
+                (0, debug_logger_1.appendDebugLog)('ELECTRON', 'Fallback to local server', { port }, 'WARN');
+                await mainWindow?.loadURL(`http://localhost:${port}`);
+            }
+            finally {
+                isFallingBack = false;
+            }
         }
     });
-    await mainWindow.loadURL(targetUrl);
+    try {
+        await mainWindow.loadURL(targetUrl);
+    }
+    catch (err) {
+        if (remoteUrl) {
+            isFallingBack = true;
+            try {
+                const port = await ensureLocalServer();
+                await mainWindow.loadURL(`http://localhost:${port}`);
+            }
+            finally {
+                isFallingBack = false;
+            }
+        }
+        else {
+            throw err;
+        }
+    }
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
@@ -130,14 +159,22 @@ async function createWindow() {
 electron_1.ipcMain.handle('clinic:get-remote-url', () => readRemoteUrl());
 electron_1.ipcMain.handle('clinic:set-remote-url', async (_event, url) => {
     const clean = writeRemoteUrl(url || '');
-    if (clean) {
-        await mainWindow?.loadURL(clean);
+    (0, debug_logger_1.appendDebugLog)('ELECTRON', 'set-remote-url', { remoteUrl: clean || 'localhost' }, 'INFO');
+    try {
+        if (clean) {
+            await mainWindow?.loadURL(clean);
+        }
+        else {
+            const port = await ensureLocalServer();
+            await mainWindow?.loadURL(`http://localhost:${port}`);
+        }
+        return { ok: true, remoteUrl: clean };
     }
-    else {
+    catch (err) {
         const port = await ensureLocalServer();
-        await mainWindow?.loadURL(`http://localhost:${port}`);
+        await mainWindow?.loadURL(`http://localhost:${port}`).catch(() => { });
+        return { ok: false, remoteUrl: '', message: err instanceof Error ? err.message : String(err) };
     }
-    return { ok: true, remoteUrl: clean };
 });
 electron_1.ipcMain.handle('clinic:download-update', async (_event, url, fileName) => {
     try {
