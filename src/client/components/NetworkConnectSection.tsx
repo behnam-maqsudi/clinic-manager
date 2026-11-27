@@ -34,8 +34,9 @@ export function NetworkConnectSection({
   const [scanning, setScanning] = useState(false);
   const [peers, setPeers] = useState<DiscoveredPeer[] | null>(null);
   const [sendingUrl, setSendingUrl] = useState<string | null>(null);
+  const [forceClientView, setForceClientView] = useState(false);
 
-  const isPrimaryHost = !activeRemoteUrl && setupState.setupCompleted;
+  const isPrimaryHost = !activeRemoteUrl && setupState.setupCompleted && role === 'doctor' && !forceClientView;
   const scanButtonLabel = isPrimaryHost ? 'اضافه کردن سیستم منشی' : 'جستجوی سیستم اصلی';
 
   async function scanNetwork() {
@@ -241,6 +242,26 @@ export function NetworkConnectSection({
                 );
               })
           )}
+        </div>
+      )}
+
+      {!activeRemoteUrl && (
+        <div className="pt-1 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setForceClientView((v) => !v);
+              setPeers(null);
+            }}
+            style={{ color: 'var(--text-muted)' }}
+            className="text-[11px] hover:underline"
+          >
+            {isPrimaryHost
+              ? 'این دستگاه سیستم فرعی است؟ اتصال به سیستم اصلی دیگر'
+              : forceClientView
+                ? 'بازگشت به حالت سیستم اصلی'
+                : ''}
+          </button>
         </div>
       )}
     </div>
