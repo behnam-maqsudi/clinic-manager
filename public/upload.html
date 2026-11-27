@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html class="h-full" dir="rtl" lang="fa" translate="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="google" content="notranslate" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>آپلود آزمایش با گوشی — مطب دکتر بهامین جهانیان</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: '#faf8ff',
+            'surface-low': '#f2f3ff',
+            'on-surface': '#131b2e',
+            primary: '#00685f',
+            'primary-container': '#008378',
+            'secondary-container': '#99efe5',
+            'on-secondary-container': '#006f67',
+          },
+          fontFamily: {
+            sans: ['Vazirmatn', 'Tahoma', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body {
+      font-family: 'Vazirmatn', Tahoma, sans-serif;
+      background-color: #faf8ff;
+      color: #131b2e;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      display: inline-block;
+      vertical-align: middle;
+      line-height: 1;
+    }
+  </style>
+</head>
+<body class="min-h-full flex flex-col">
+  <header class="bg-white border-b border-slate-200 px-4 h-14 flex items-center justify-between sticky top-0 z-20">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center">
+        <span class="material-symbols-outlined text-[18px]">clinical_notes</span>
+      </div>
+      <span class="font-bold text-sm text-on-surface">مطب دکتر بهامین جهانیان</span>
+    </div>
+    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-secondary-container text-on-secondary-container text-[11px] font-semibold">
+      <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+      شبکه مطب فعال
+    </span>
+  </header>
+
+  <main class="max-w-md w-full mx-auto px-4 py-5 space-y-4 flex-1">
+    <!-- Patient Info Card -->
+    <section class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2.5 shadow-2xs">
+      <div class="flex items-center justify-between">
+        <span class="text-[11px] font-semibold text-primary bg-secondary-container/50 px-2.5 py-0.5 rounded-full">آپلود مستقیم به پرونده بیمار</span>
+        <span id="patientTime" class="text-xs font-bold text-slate-500"></span>
+      </div>
+      <h1 id="patientName" class="text-lg font-extrabold text-on-surface">در حال بارگذاری...</h1>
+      <p id="patientMeta" class="text-xs text-slate-500"></p>
+      <div class="bg-surface-low rounded-xl p-3 text-xs text-slate-600 leading-5 flex items-start gap-2">
+        <span class="material-symbols-outlined text-[18px] text-primary shrink-0 mt-0.5">light_mode</span>
+        <span>لطفاً از برگه آزمایش، سونوگرافی یا نسخه در نور مناسب عکس بگیرید تا متن‌ها کاملاً خوانا ثبت شوند.</span>
+      </div>
+    </section>
+
+    <!-- Camera & Gallery Capture Card -->
+    <section class="bg-white rounded-2xl border-2 border-dashed border-slate-300 p-5 text-center space-y-3">
+      <div class="w-12 h-12 rounded-2xl bg-secondary-container/60 text-primary flex items-center justify-center mx-auto">
+        <span class="material-symbols-outlined text-[28px]">document_scanner</span>
+      </div>
+      <div>
+        <h2 class="text-sm font-bold text-on-surface">اسکن مدارک بالینی و آزمایش</h2>
+        <p class="text-xs text-slate-500 mt-1">می‌توانید چند برگه را پشت سر هم عکس بگیرید یا از گالری انتخاب کنید</p>
+      </div>
+
+      <div class="space-y-2.5 pt-1">
+        <label class="w-full py-3.5 px-4 rounded-xl bg-primary hover:bg-primary-container text-white font-bold text-sm flex items-center justify-center gap-2 cursor-pointer shadow-sm">
+          <span class="material-symbols-outlined">photo_camera</span>
+          <span>گرفتن عکس جدید با دوربین گوشی</span>
+          <input id="cameraInput" type="file" accept="image/*" capture="environment" class="hidden" />
+        </label>
+
+        <label class="w-full py-3 px-4 rounded-xl bg-surface-low hover:bg-slate-200 text-on-surface font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer border border-slate-200">
+          <span class="material-symbols-outlined text-[18px]">upload_file</span>
+          <span>انتخاب از گالری یا فایل PDF گزارش</span>
+          <input id="galleryInput" type="file" accept="image/*,.pdf" multiple class="hidden" />
+        </label>
+      </div>
+    </section>
+
+    <!-- Selected Files Preview -->
+    <section id="selectedSection" class="hidden bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-xs font-bold text-on-surface">برگه‌های آماده ارسال (<span id="selectedCount">۰</span>)</h3>
+      </div>
+      <div id="selectedList" class="space-y-2"></div>
+    </section>
+
+    <!-- Category & Note -->
+    <section class="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+      <label class="block text-xs font-bold text-slate-700">دسته‌بندی مدرک</label>
+      <div id="categoryChips" class="flex flex-wrap gap-2 text-xs">
+        <button type="button" data-cat="آزمایش خون" class="cat-chip px-3 py-1.5 rounded-full bg-primary text-white font-semibold">✓ آزمایش خون</button>
+        <button type="button" data-cat="سونوگرافی / رادیولوژی" class="cat-chip px-3 py-1.5 rounded-full bg-surface-low text-slate-700">سونوگرافی / رادیولوژی</button>
+        <button type="button" data-cat="نوار قلب (ECG)" class="cat-chip px-3 py-1.5 rounded-full bg-surface-low text-slate-700">نوار قلب (ECG)</button>
+        <button type="button" data-cat="نسخه دارویی" class="cat-chip px-3 py-1.5 rounded-full bg-surface-low text-slate-700">نسخه دارویی</button>
+        <button type="button" data-cat="سایر مدارک" class="cat-chip px-3 py-1.5 rounded-full bg-surface-low text-slate-700">سایر مدارک</button>
+      </div>
+
+      <div>
+        <label class="block text-xs font-bold text-slate-700 mb-1">عنوان یا توضیح کوتاه (اختیاری)</label>
+        <input id="customTitleInput" type="text" placeholder="مثلاً چکاپ کامل آزمایشگاه پارس" class="w-full rounded-xl border border-slate-200 bg-surface-low/60 text-xs px-3 py-2.5 focus:border-primary focus:ring-0" />
+      </div>
+    </section>
+
+    <button id="submitBtn" onclick="uploadSelectedFiles()" disabled class="w-full py-4 px-5 rounded-2xl bg-primary disabled:bg-slate-300 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-colors">
+      <span class="material-symbols-outlined">send</span>
+      <span>ارسال مستقیم به پرونده بیمار در مطب</span>
+    </button>
+
+    <div id="successBox" class="hidden rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-center space-y-1">
+      <p class="text-sm font-bold text-emerald-800">✅ مدارک با موفقیت ارسال شد!</p>
+      <p class="text-xs text-emerald-700">فایل‌ها بلافاصله روی مانیتور منشی و دکتر جهانیان نمایش داده شدند.</p>
+    </div>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const patientId = params.get('patientId');
+    let selectedCategory = 'آزمایش خون';
+    let selectedFiles = [];
+
+    async function loadPatient() {
+      if (!patientId) {
+        document.getElementById('patientName').textContent = 'پرونده بیمار مشخص نشده است';
+        return;
+      }
+      const res = await fetch(`/api/patients/${patientId}`);
+      const data = await res.json();
+      if (!data.ok) {
+        document.getElementById('patientName').textContent = 'مراجعه‌کننده پیدا نشد';
+        return;
+      }
+      const p = data.patient;
+      document.getElementById('patientName').textContent = p.full_name;
+      document.getElementById('patientMeta').textContent = `کد ملی: ${p.national_id || '—'}  •  پزشک معالج: دکتر بهامین جهانیان`;
+      document.getElementById('patientTime').textContent = p.visit_time ? `نوبت ${p.visit_time}` : '';
+    }
+
+    function addFiles(fileList) {
+      for (const f of fileList) {
+        selectedFiles.push(f);
+      }
+      renderSelectedFiles();
+    }
+
+    function removeSelectedFile(idx) {
+      selectedFiles.splice(idx, 1);
+      renderSelectedFiles();
+    }
+
+    function renderSelectedFiles() {
+      const section = document.getElementById('selectedSection');
+      const list = document.getElementById('selectedList');
+      const submitBtn = document.getElementById('submitBtn');
+      document.getElementById('selectedCount').textContent = selectedFiles.length;
+
+      if (selectedFiles.length === 0) {
+        section.classList.add('hidden');
+        submitBtn.disabled = true;
+        return;
+      }
+
+      section.classList.remove('hidden');
+      submitBtn.disabled = false;
+      list.innerHTML = selectedFiles
+        .map((f, idx) => {
+          const kb = Math.max(1, Math.round(f.size / 1024));
+          return `
+            <div class="flex items-center justify-between p-2.5 rounded-xl bg-surface-low border border-slate-200 text-xs">
+              <div class="truncate pr-1">
+                <p class="font-semibold text-on-surface truncate">${f.name}</p>
+                <p class="text-[11px] text-slate-400">${kb} کیلوبایت</p>
+              </div>
+              <button type="button" onclick="removeSelectedFile(${idx})" class="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50">
+                <span class="material-symbols-outlined text-[18px]">delete</span>
+              </button>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
+    document.getElementById('cameraInput').addEventListener('change', (e) => {
+      addFiles(e.target.files);
+      e.target.value = '';
+    });
+
+    document.getElementById('galleryInput').addEventListener('change', (e) => {
+      addFiles(e.target.files);
+      e.target.value = '';
+    });
+
+    document.querySelectorAll('.cat-chip').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        selectedCategory = btn.dataset.cat;
+        document.querySelectorAll('.cat-chip').forEach((b) => {
+          const active = b === btn;
+          b.className = active
+            ? 'cat-chip px-3 py-1.5 rounded-full bg-primary text-white font-semibold'
+            : 'cat-chip px-3 py-1.5 rounded-full bg-surface-low text-slate-700';
+          b.textContent = active ? `✓ ${b.dataset.cat}` : b.dataset.cat;
+        });
+      });
+    });
+
+    async function uploadSelectedFiles() {
+      if (!patientId || selectedFiles.length === 0) return;
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      btn.textContent = 'در حال ارسال...';
+
+      const customNote = document.getElementById('customTitleInput').value.trim();
+      const title = customNote ? `${selectedCategory} - ${customNote}` : selectedCategory;
+
+      const formData = new FormData();
+      for (const f of selectedFiles) {
+        formData.append('files', f);
+      }
+      formData.append('title', title);
+      formData.append('uploaded_by', 'mobile');
+
+      const res = await fetch(`/api/patients/${patientId}/attachments`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        selectedFiles = [];
+        renderSelectedFiles();
+        document.getElementById('customTitleInput').value = '';
+        document.getElementById('successBox').classList.remove('hidden');
+      } else {
+        alert(data.message || 'خطا در ارسال فایل');
+      }
+
+      btn.disabled = selectedFiles.length === 0;
+      btn.innerHTML = `<span class="material-symbols-outlined">send</span><span>ارسال مستقیم به پرونده بیمار در مطب</span>`;
+    }
+
+    loadPatient();
+  </script>
+</body>
+</html>

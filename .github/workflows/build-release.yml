@@ -1,0 +1,46 @@
+name: Build Clinic Manager Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies and build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prune devDependencies for portable bundle
+        run: npm prune --omit=dev
+
+      - name: Package portable Windows bundle
+        shell: pwsh
+        run: |
+          $stage = "clinic-manager-win"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item -Path "src","public","dist","node_modules","package.json","package-lock.json","install.bat","start.bat","doctor-shortcut.bat","ClinicManager.vbs","README.md" -Destination $stage -Recurse -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath "clinic-manager-windows-prebuilt.zip" -Force
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Clinic Manager v1.0.${{ github.run_number }}
+          files: clinic-manager-windows-prebuilt.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,7 @@
+node_modules/
+data/
+stitch_export/
+prototypes/
+*.zip
+.env
+*.log

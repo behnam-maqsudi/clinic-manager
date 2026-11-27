@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="teal"] {
+  --bg-app: #faf8ff;
+  --bg-card: #ffffff;
+  --bg-subtle: #f2f3ff;
+  --text-main: #131b2e;
+  --text-muted: #64748b;
+  --border-main: #e2e8f0;
+  --accent: #00685f;
+  --accent-hover: #008378;
+  --accent-soft: #ccfbf1;
+  --accent-soft-text: #005049;
+}
+
+[data-theme="sky"] {
+  --bg-app: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-subtle: #eff6ff;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --border-main: #e2e8f0;
+  --accent: #0284c7;
+  --accent-hover: #0369a1;
+  --accent-soft: #e0f2fe;
+  --accent-soft-text: #075985;
+}
+
+[data-theme="emerald"] {
+  --bg-app: #f6fef9;
+  --bg-card: #ffffff;
+  --bg-subtle: #ecfdf5;
+  --text-main: #064e3b;
+  --text-muted: #64748b;
+  --border-main: #d1fae5;
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-soft: #d1fae5;
+  --accent-soft-text: #065f46;
+}
+
+[data-theme="dark"] {
+  --bg-app: #0f172a;
+  --bg-card: #1e293b;
+  --bg-subtle: #334155;
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border-main: #334155;
+  --accent: #14b8a6;
+  --accent-hover: #0d9488;
+  --accent-soft: #134e4a;
+  --accent-soft-text: #99f6e4;
+}
+
+body {
+  font-family: 'Vazirmatn', Tahoma, 'Segoe UI', sans-serif;
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

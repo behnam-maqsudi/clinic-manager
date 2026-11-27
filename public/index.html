@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html class="h-full" dir="rtl" lang="fa" translate="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="google" content="notranslate" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>مطب دکتر بهامین جهانیان</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#00685f" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300..800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: '#faf8ff',
+            'surface-low': '#f2f3ff',
+            'surface-container': '#eaedff',
+            'on-surface': '#131b2e',
+            'on-surface-variant': '#3d4947',
+            primary: '#00685f',
+            'primary-container': '#008378',
+            'secondary-container': '#99efe5',
+            'on-secondary-container': '#006f67',
+            outline: '#6d7a77',
+            'outline-variant': '#bcc9c6',
+          },
+          fontFamily: {
+            sans: ['Vazirmatn', 'Tahoma', 'Segoe UI', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body {
+      font-family: 'Vazirmatn', Tahoma, 'Segoe UI', sans-serif;
+      background-color: #faf8ff;
+      color: #131b2e;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      display: inline-block;
+      vertical-align: middle;
+      line-height: 1;
+    }
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body class="min-h-full flex flex-col">
+  <!-- Top Header -->
+  <header class="bg-white/95 backdrop-blur border-b border-slate-200/80 sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-sm">
+          <span class="material-symbols-outlined text-[22px]">clinical_notes</span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-bold text-on-surface text-sm sm:text-base">مطب دکتر بهامین جهانیان</h1>
+            <span id="syncBadge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span id="syncDot" class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span id="syncText">همگام‌سازی زنده</span>
+            </span>
+          </div>
+          <p id="todayShamsiLabel" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <!-- Role Switcher -->
+        <div class="hidden sm:flex bg-surface-low p-1 rounded-xl border border-slate-200/80 text-xs">
+          <button id="roleSecretaryBtn" onclick="setRole('secretary')" class="px-3 py-1.5 rounded-lg font-semibold transition-all">منشی</button>
+          <button id="roleDoctorBtn" onclick="setRole('doctor')" class="px-3 py-1.5 rounded-lg font-semibold transition-all">پزشک</button>
+        </div>
+
+        <button onclick="openNetworkModal()" class="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 font-medium inline-flex items-center gap-1.5" title="آدرس اتصال سیستم پزشک و موبایل">
+          <span class="material-symbols-outlined text-[18px] text-primary">wifi</span>
+          <span class="hidden md:inline">شبکه مطب</span>
+        </button>
+
+        <button onclick="openSettingsModal()" class="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 font-medium inline-flex items-center gap-1.5" title="بکاپ و بروزرسانی گیت">
+          <span class="material-symbols-outlined text-[18px] text-primary">sync</span>
+          <span class="hidden md:inline">بکاپ و گیت</span>
+        </button>
+
+        <button onclick="openBulkModal()" class="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 font-medium inline-flex items-center gap-1.5" title="وارد کردن سریع لیست از دفتر یا اکسل">
+          <span class="material-symbols-outlined text-[18px] text-primary">playlist_add</span>
+          <span class="hidden lg:inline">ورود از دفتر</span>
+        </button>
+
+        <button onclick="openPatientModal()" class="px-4 py-2 rounded-xl bg-primary hover:bg-primary-container text-white text-xs sm:text-sm font-semibold shadow-sm inline-flex items-center gap-1.5 transition-colors">
+          <span class="material-symbols-outlined text-[19px]">person_add</span>
+          <span>ثبت مراجعه‌کننده</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-5 flex-1">
+    <!-- KPI Row -->
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-white rounded-2xl border border-slate-200/80 p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+        <div class="absolute inset-y-0 right-0 w-1 bg-slate-400"></div>
+        <div>
+          <p class="text-xs font-medium text-slate-500">کل مراجعه‌کنندگان</p>
+          <p id="statTotal" class="text-3xl font-extrabold text-on-surface mt-1.5 tabular-nums">۰</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[24px]">groups</span>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-amber-200/70 p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+        <div class="absolute inset-y-0 right-0 w-1 bg-amber-500"></div>
+        <div>
+          <p class="text-xs font-medium text-slate-500">در انتظار ویزیت</p>
+          <p id="statWaiting" class="text-3xl font-extrabold text-amber-600 mt-1.5 tabular-nums">۰</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[24px]">hourglass_top</span>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-teal-200/70 p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+        <div class="absolute inset-y-0 right-0 w-1 bg-primary"></div>
+        <div>
+          <p class="text-xs font-medium text-slate-500">در حال ویزیت</p>
+          <p id="statInProgress" class="text-3xl font-extrabold text-primary mt-1.5 tabular-nums">۰</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-secondary-container/60 text-primary flex items-center justify-center">
+          <span class="material-symbols-outlined text-[24px]">stethoscope</span>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-emerald-200/70 p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+        <div class="absolute inset-y-0 right-0 w-1 bg-emerald-500"></div>
+        <div>
+          <p class="text-xs font-medium text-slate-500">ویزیت‌شده</p>
+          <p id="statVisited" class="text-3xl font-extrabold text-emerald-600 mt-1.5 tabular-nums">۰</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[24px]">task_alt</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Search & Filters -->
+    <section class="bg-white rounded-2xl border border-slate-200/80 p-3.5 flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between shadow-sm">
+      <div class="relative flex-1">
+        <span class="material-symbols-outlined text-slate-400 text-[20px] absolute right-3.5 top-2.5">search</span>
+        <input
+          id="searchInput"
+          type="text"
+          placeholder="جستجو با نام، شماره پرونده، ۴ رقم آخر موبایل یا کد ملی..."
+          class="w-full pr-10 pl-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white focus:border-primary focus:ring-0 text-sm"
+        />
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200/60">
+          <button id="dateTodayBtn" onclick="setDateFilter('today')" class="px-3.5 py-1.5 rounded-lg font-semibold transition-all">امروز</button>
+          <button id="dateAllBtn" onclick="setDateFilter('all')" class="px-3.5 py-1.5 rounded-lg font-semibold transition-all">همه روزها</button>
+        </div>
+
+        <label class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 cursor-pointer">
+          <span class="material-symbols-outlined text-[16px] text-primary">calendar_month</span>
+          <span id="customDateLabel">انتخاب تاریخ</span>
+          <input id="customDateInput" type="date" class="sr-only" />
+        </label>
+
+        <div class="relative">
+          <select id="statusFilter" class="appearance-none pr-3.5 pl-8 py-2 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:border-primary focus:ring-0 cursor-pointer">
+            <option value="all">همه وضعیت‌ها</option>
+            <option value="waiting">در انتظار</option>
+            <option value="in_progress">در حال ویزیت</option>
+            <option value="visited">ویزیت‌شده</option>
+            <option value="cancelled">لغو شده</option>
+          </select>
+          <span class="material-symbols-outlined text-[16px] text-slate-400 pointer-events-none absolute left-2.5 top-2.5">expand_more</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Patients Table -->
+    <section class="bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-sm">
+      <div class="overflow-x-auto">
+        <table class="w-full text-right border-collapse">
+          <thead>
+            <tr class="bg-slate-50/90 border-b border-slate-200 text-[11px] font-bold text-slate-500">
+              <th class="py-3.5 px-4">نوبت</th>
+              <th class="py-3.5 px-4">نام و نام خانوادگی</th>
+              <th class="py-3.5 px-4">شماره تماس</th>
+              <th class="py-3.5 px-4">کد ملی</th>
+              <th class="py-3.5 px-4">تاریخ شمسی</th>
+              <th class="py-3.5 px-4">وضعیت</th>
+              <th class="py-3.5 px-4">مدارک و آزمایش‌ها</th>
+              <th class="py-3.5 px-4">یادداشت</th>
+              <th class="py-3.5 px-4 text-left">عملیات</th>
+            </tr>
+          </thead>
+          <tbody id="patientsTableBody" class="divide-y divide-slate-100 text-sm"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="hidden py-16 text-center px-4">
+        <div class="w-16 h-16 rounded-2xl bg-secondary-container/40 text-primary flex items-center justify-center mx-auto mb-3">
+          <span class="material-symbols-outlined text-3xl">patient_list</span>
+        </div>
+        <p class="text-sm font-bold text-slate-700">هنوز مراجعه‌کننده‌ای در این لیست ثبت نشده است</p>
+        <p class="text-xs text-slate-400 mt-1 mb-4">با ثبت اولین مراجعه‌کننده، لیست نوبت‌ها هم‌زمان برای دکتر و منشی نمایش داده می‌شود.</p>
+        <button onclick="openPatientModal()" class="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-container text-white text-xs font-semibold shadow-sm inline-flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-[18px]">person_add</span>
+          <span>ثبت اولین مراجعه‌کننده</span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+    <span>سامانه مدیریت مطب دکتر بهامین جهانیان</span>
+    <span id="footerVersion">نسخه ۱.۰.۰</span>
+  </footer>
+
+  <!-- Modal 1: Add / Edit Patient -->
+  <div id="patientModal" class="hidden fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <h3 id="patientModalTitle" class="font-bold text-base text-on-surface">ثبت مراجعه‌کننده جدید</h3>
+        <button onclick="closeModal('patientModal')" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+
+      <form id="patientForm" class="p-6 space-y-4">
+        <input type="hidden" id="patientIdInput" />
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">نام و نام خانوادگی *</label>
+            <input id="fullNameInput" type="text" required placeholder="مثلاً علی رضایی" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">شماره پرونده</label>
+            <input id="fileNumberInput" type="text" dir="ltr" placeholder="مثلاً 412" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm text-left font-mono" />
+          </div>
+        </div>
+
+        <!-- Returning Patient Auto-Suggest -->
+        <div id="returningSuggestions" class="hidden rounded-xl bg-secondary-container/30 border border-teal-200 p-2.5 space-y-1.5">
+          <p class="text-[11px] font-bold text-primary">بیمار قبلی پیدا شد (برای پر کردن خودکار کلیک کنید):</p>
+          <div id="returningSuggestionsList" class="flex flex-wrap gap-1.5"></div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">شماره تماس</label>
+            <input id="phoneInput" type="text" dir="ltr" placeholder="09123456789" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm text-left" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">کد ملی</label>
+            <input id="nationalIdInput" type="text" dir="ltr" placeholder="0012345678" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm text-left" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">تاریخ مراجعه</label>
+            <input id="visitDateInput" type="date" required class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">ساعت نوبت</label>
+            <input id="visitTimeInput" type="text" dir="ltr" placeholder="10:30" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm text-left" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">وضعیت</label>
+            <select id="statusInput" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm">
+              <option value="waiting">در انتظار</option>
+              <option value="in_progress">در حال ویزیت</option>
+              <option value="visited">ویزیت‌شده</option>
+              <option value="cancelled">لغو شده</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5">یادداشت پزشک / منشی</label>
+          <textarea id="notesInput" rows="3" placeholder="توضیحات ویزیت، علائم یا پیگیری بعدی..." class="w-full rounded-xl border border-slate-200 bg-surface-low/50 focus:bg-white focus:border-primary focus:ring-0 text-sm"></textarea>
+          <div class="flex flex-wrap gap-1.5 mt-2">
+            <button type="button" onclick="appendNoteChip('چکاپ سالانه')" class="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-700">+ چکاپ سالانه</button>
+            <button type="button" onclick="appendNoteChip('بررسی آزمایش خون')" class="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-700">+ بررسی آزمایش خون</button>
+            <button type="button" onclick="appendNoteChip('تجدید نسخه')" class="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-700">+ تجدید نسخه</button>
+            <button type="button" onclick="appendNoteChip('کنترل ۳ ماه دیگر')" class="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-700">+ کنترل ۳ ماه دیگر</button>
+          </div>
+        </div>
+
+        <div class="pt-2 flex items-center justify-end gap-2.5">
+          <button type="button" onclick="closeModal('patientModal')" class="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">انصراف</button>
+          <button type="submit" class="px-5 py-2 rounded-xl bg-primary hover:bg-primary-container text-white text-xs sm:text-sm font-semibold shadow-sm">ذخیره اطلاعات</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 2: Patient Attachments & Mobile QR Upload -->
+  <div id="labModal" class="hidden fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-4xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-secondary-container/60 text-primary flex items-center justify-center">
+            <span class="material-symbols-outlined">folder_shared</span>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 id="labModalTitle" class="font-bold text-base text-on-surface">مدارک و آزمایش‌های بیمار</h3>
+              <span id="labModalStatusBadge" class="px-2 py-0.5 rounded-full text-[11px] font-medium"></span>
+            </div>
+            <p id="labModalMeta" class="text-xs text-slate-500 mt-0.5"></p>
+          </div>
+        </div>
+        <button onclick="closeModal('labModal')" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+
+      <div class="p-6 grid md:grid-cols-5 gap-6 overflow-y-auto">
+        <!-- Left 3 cols: Upload from PC + Stored Files -->
+        <div class="md:col-span-3 space-y-4">
+          <div class="space-y-2">
+            <input id="pcUploadTitle" type="text" placeholder="عنوان مدرک (اختیاری، مثلاً آزمایش خون یا سونوگرافی)" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 text-xs px-3 py-2 focus:border-primary focus:ring-0" />
+            <label id="dropZone" class="block border-2 border-dashed border-slate-300 hover:border-primary rounded-2xl p-5 text-center bg-surface-low/40 cursor-pointer transition-colors">
+              <input id="pcFileInput" type="file" multiple accept="image/*,.pdf" class="hidden" />
+              <div class="w-10 h-10 rounded-full bg-secondary-container/60 text-primary flex items-center justify-center mx-auto mb-2">
+                <span class="material-symbols-outlined">cloud_upload</span>
+              </div>
+              <p class="text-sm font-semibold text-slate-700">فایل‌های آزمایش را اینجا رها کنید</p>
+              <p class="text-xs text-slate-400 mt-1">یا برای انتخاب از کامپیوتر کلیک کنید (JPG, PNG, PDF تا ۲۰ مگابایت)</p>
+            </label>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-bold text-slate-700">مدارک ذخیره‌شده (<span id="attachmentsCount">۰</span> مورد)</h4>
+            </div>
+            <div id="attachmentsList" class="space-y-2.5"></div>
+          </div>
+        </div>
+
+        <!-- Right 2 cols: Mobile QR Upload -->
+        <div class="md:col-span-2 bg-surface-low border border-slate-200/80 rounded-2xl p-5 flex flex-col items-center justify-center text-center">
+          <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-secondary-container text-on-secondary-container text-[11px] font-bold mb-3">
+            <span class="material-symbols-outlined text-[15px]">qr_code_scanner</span>
+            آپلود سریع با دوربین گوشی
+          </span>
+          <h4 class="text-sm font-bold text-on-surface mb-1">اسکن اختصاصی پرونده</h4>
+          <p class="text-xs text-slate-500 leading-5 mb-4">
+            منشی یا مراجعه‌کننده با دوربین گوشی این کد را اسکن کند و مستقیماً از برگه آزمایش عکس بگیرد.
+          </p>
+
+          <div class="w-44 h-44 bg-white rounded-2xl border border-slate-200 p-2.5 flex items-center justify-center shadow-xs mb-4">
+            <img id="qrCodeImg" src="" alt="QR Code" class="w-full h-full object-contain" />
+          </div>
+
+          <div class="w-full flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1.5">
+            <input id="mobileUploadUrlInput" type="text" readonly dir="ltr" class="flex-1 text-[11px] font-mono text-slate-600 bg-transparent border-none focus:ring-0 p-1" />
+            <button onclick="copyMobileUrl()" class="px-2.5 py-1 rounded-lg bg-surface-low hover:bg-slate-200 text-xs font-semibold text-slate-700 shrink-0">کپی</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Network & LAN Info -->
+  <div id="networkModal" class="hidden fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <h3 class="font-bold text-base text-on-surface">اتصال سیستم پزشک و موبایل در شبکه مطب</h3>
+        <button onclick="closeModal('networkModal')" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+      <div class="p-6 space-y-4 text-xs text-slate-600 leading-6">
+        <p>برای اینکه دکتر بهامین جهانیان از سیستم خودش هم‌زمان به همین لیست دسترسی داشته باشد، مطمئن شوید هر دو سیستم به یک مودم/وای‌فای وصل هستند و آدرس زیر را در سیستم دکتر باز کنید:</p>
+        <div id="lanUrlsList" class="space-y-2"></div>
+        <p class="text-[11px] text-slate-400">نکته: روی سیستم دکتر می‌توانید فایل <code class="bg-slate-100 px-1 rounded">doctor-shortcut.bat</code> را اجرا کنید تا آیکون برنامه روی دسکتاپ دکتر ساخته شود.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Backup & Git Self-Update -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <h3 class="font-bold text-base text-on-surface">بکاپ دیتابیس و بروزرسانی از گیت</h3>
+        <button onclick="closeModal('settingsModal')" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+      <div class="p-6 space-y-5">
+        <!-- Git Update Section -->
+        <div class="rounded-2xl border border-slate-200 p-4 bg-surface-low/50 space-y-3">
+          <div class="flex items-center justify-between">
+            <h4 class="text-sm font-bold text-on-surface">بروزرسانی برنامه از GitHub</h4>
+            <span id="gitCommitBadge" class="text-[11px] font-mono bg-white px-2 py-0.5 rounded-lg border border-slate-200 text-slate-600">...</span>
+          </div>
+          <p id="gitStatusMessage" class="text-xs text-slate-600">در حال بررسی وضعیت گیت...</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="checkGitUpdate()" class="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700">بررسی مجدد</button>
+            <button id="applyGitUpdateBtn" onclick="applyGitUpdate()" class="hidden px-4 py-2 rounded-xl bg-primary hover:bg-primary-container text-white text-xs font-semibold">دریافت و نصب بروزرسانی</button>
+          </div>
+        </div>
+
+        <!-- Backup Section -->
+        <div class="rounded-2xl border border-slate-200 p-4 space-y-3">
+          <h4 class="text-sm font-bold text-on-surface">پشتیبان‌گیری از اطلاعات بیماران</h4>
+          <p class="text-xs text-slate-500">اطلاعات بیماران در فایل <code class="bg-slate-100 px-1 rounded">clinic.db</code> ذخیره می‌شود و هنگام آپدیت گیت دست‌نخورده می‌ماند.</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="createServerBackup()" class="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700">ذخیره بکاپ در سرور</button>
+            <a href="/api/backup/download" class="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1.5">
+              <span class="material-symbols-outlined text-[16px]">download</span>
+              <span>دانلود فایل دیتابیس</span>
+            </a>
+          </div>
+          <p id="backupMessage" class="text-xs text-emerald-700 hidden"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 5: Bulk / Fast Notebook Import -->
+  <div id="bulkModal" class="hidden fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-3xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+        <div>
+          <h3 class="font-bold text-base text-on-surface">ورود سریع لیست از دفتر کاغذی</h3>
+          <p class="text-xs text-slate-500 mt-0.5">بدون باز و بسته کردن پنجره، ده‌ها مراجعه‌کننده را پشت‌سرهم یا با کپی/پیست ثبت کنید</p>
+        </div>
+        <button onclick="closeModal('bulkModal')" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+
+      <div class="px-6 pt-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+        <button id="bulkTabGridBtn" onclick="setBulkTab('grid')" class="px-3.5 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold">تایپ سریع سطری (مثل اکسل)</button>
+        <button id="bulkTabPasteBtn" onclick="setBulkTab('paste')" class="px-3.5 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold">کپی / پیست متن لیست</button>
+        <div class="mr-auto flex items-center gap-2 text-xs">
+          <span class="text-slate-500">تاریخ نوبت:</span>
+          <input id="bulkVisitDate" type="date" class="rounded-lg border border-slate-200 text-xs py-1 px-2" />
+        </div>
+      </div>
+
+      <div class="p-6 overflow-y-auto flex-1 space-y-4">
+        <!-- Tab 1: Fast Grid -->
+        <div id="bulkGridSection" class="space-y-3">
+          <table class="w-full text-right border-collapse text-xs">
+            <thead>
+              <tr class="text-slate-500 border-b border-slate-200">
+                <th class="pb-2 pl-2">نام و نام خانوادگی *</th>
+                <th class="pb-2 px-2">شماره تماس</th>
+                <th class="pb-2 px-2">شماره پرونده</th>
+                <th class="pb-2 pr-2">کد ملی</th>
+              </tr>
+            </thead>
+            <tbody id="bulkGridBody" class="divide-y divide-slate-100"></tbody>
+          </table>
+          <button type="button" onclick="addBulkGridRow()" class="text-xs text-primary font-semibold hover:underline">+ افزودن سطر جدید (یا در آخرین خانه Enter بزنید)</button>
+        </div>
+
+        <!-- Tab 2: Paste Text -->
+        <div id="bulkPasteSection" class="hidden space-y-3">
+          <p class="text-xs text-slate-600 leading-6">
+            هر خط را برای یک نفر وارد کنید. برنامه خودش اسم، شماره موبایل و شماره پرونده را تشخیص می‌دهد (مثلاً: <code class="bg-slate-100 px-1.5 py-0.5 rounded" dir="ltr">علی رضایی - 09123456789 - 412</code> یا کپی مستقیم از اکسل):
+          </p>
+          <textarea id="bulkPasteInput" rows="8" placeholder="علی رضایی - 09123456789 - 412&#10;مریم محمدی - 09358124490 - 415&#10;حسین کریمی - 09192201188 - 380" class="w-full rounded-xl border border-slate-200 bg-surface-low/50 text-xs p-3 leading-6 focus:border-primary focus:ring-0"></textarea>
+        </div>
+      </div>
+
+      <div class="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-2 shrink-0 bg-slate-50/70">
+        <button type="button" onclick="closeModal('bulkModal')" class="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 bg-white">انصراف</button>
+        <button type="button" onclick="submitBulkImport()" class="px-5 py-2 rounded-xl bg-primary hover:bg-primary-container text-white text-xs sm:text-sm font-semibold shadow-sm">ثبت همه در لیست</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Doctor Call Alert Banner (For Secretary) -->
+  <div id="callAlertBanner" class="hidden fixed top-20 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-primary text-white shadow-xl flex items-center gap-3 border border-white/20">
+    <span class="material-symbols-outlined animate-bounce">notifications_active</span>
+    <span id="callAlertText" class="text-sm font-bold"></span>
+    <button onclick="document.getElementById('callAlertBanner').classList.add('hidden')" class="text-white/80 hover:text-white text-xs">✕</button>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed bottom-5 left-5 z-50 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-medium shadow-lg"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
