@@ -66,6 +66,7 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await expect(page.getByText('یادداشت کامل پزشک / منشی')).toBeVisible();
     await page.getByPlaceholder('یادداشتی ثبت نشده است...').fill('یادداشت کامل تست جزئیات پرونده');
     await page.getByRole('button', { name: 'ذخیره یادداشت' }).click();
+    await expect(page.getByText('یادداشت پرونده ذخیره شد.')).toBeVisible();
     await page.getByRole('button', { name: 'بستن جزئیات' }).click();
 
     // 4. Re-open details modal -> verify saved note persisted, then open Lab attachments & QR Code modal
