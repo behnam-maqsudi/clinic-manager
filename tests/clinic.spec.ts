@@ -223,6 +223,23 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     const unauthReset = await page.request.post('/api/dev/reset-setup');
     expect(unauthReset.status()).toBe(403);
 
+    // 6.9. Verify Debug File Logger (toggle on, batch append, status, download, clear, toggle off)
+    const logToggleOn = await page.request.post('/api/dev/logs/toggle', { data: { enabled: true } });
+    expect(logToggleOn.ok()).toBe(true);
+    await page.request.post('/api/dev/logs/append', {
+      data: {
+        entries: [{ level: 'STATE', source: 'STORE:App', message: 'e2e test log entry' }],
+      },
+    });
+    const logStatus = await (await page.request.get('/api/dev/logs/status')).json();
+    expect(logStatus.enabled).toBe(true);
+    expect(logStatus.lineCount).toBeGreaterThan(0);
+    const logDownload = await page.request.get('/api/dev/logs/download');
+    expect(logDownload.ok()).toBe(true);
+    expect(await logDownload.text()).toContain('e2e test log entry');
+    await page.request.post('/api/dev/logs/clear');
+    await page.request.post('/api/dev/logs/toggle', { data: { enabled: false } });
+
     // 7. Cleanup test patients via API so DB stays clean
     const listRes = await page.request.get('/api/patients?date=all&q=تست E2E');
     const listData = await listRes.json();

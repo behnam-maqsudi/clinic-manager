@@ -3,6 +3,7 @@ import type { DateObject } from 'react-multi-date-picker';
 import type { Patient, PatientStatus } from '../../shared/types';
 import { getTodayIso, toIsoDateString } from '../utils/clinicHelpers';
 import { useAppStore } from './useAppStore';
+import { withStoreLogger } from './withLogger';
 
 interface PatientsState {
   patients: Patient[];
@@ -21,7 +22,8 @@ interface PatientsState {
   quickStatus: (id: number, status: PatientStatus) => Promise<Patient | null>;
 }
 
-export const usePatientsStore = create<PatientsState>((set, get) => ({
+export const usePatientsStore = create<PatientsState>(
+  withStoreLogger('Patients', (set, get) => ({
   patients: [],
   query: '',
   debouncedQuery: '',
@@ -79,4 +81,5 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
     }
     return null;
   },
-}));
+}))
+);

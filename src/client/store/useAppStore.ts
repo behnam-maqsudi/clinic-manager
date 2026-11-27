@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { ClinicSetupState, UserRole } from '../../shared/types';
 import { playGentleChime, THEMES } from '../utils/clinicHelpers';
 import { sendClientLog } from '../utils/debugLogger';
+import { withStoreLogger } from './withLogger';
 
 export interface InviteBannerData {
   fromName: string;
@@ -60,7 +61,8 @@ const initialClientId =
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>(
+  withStoreLogger('App', (set, get) => ({
   role: initialRole,
   isAuthenticated: localStorage.getItem('clinic_logged_in') === 'true',
   doctorToken: localStorage.getItem('clinic_doctor_token') || '',
@@ -214,4 +216,5 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } catch {}
   },
-}));
+}))
+);

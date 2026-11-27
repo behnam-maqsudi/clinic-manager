@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { appendDebugLog } from '../debug-logger';
 
 let mainWindow: BrowserWindow | null = null;
 let closeServer: (() => void) | null = null;
@@ -86,13 +87,15 @@ async function createWindow() {
 
   let isFallingBack = false;
 
-  mainWindow.webContents.on('did-fail-load', async (_event, errorCode, _errorDescription, validatedURL, isMainFrame) => {
+  mainWindow.webContents.on('did-fail-load', async (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    appendDebugLog('ELECTRON', `did-fail-load (${errorCode}): ${errorDescription}`, { validatedURL, isMainFrame }, 'WARN');
     // Ignore ERR_ABORTED (-3) caused by intentional redirects/navigations
     if (errorCode === -3 || isFallingBack) return;
     if (isMainFrame && readRemoteUrl() && validatedURL && !validatedURL.startsWith('http://localhost:')) {
       isFallingBack = true;
       try {
         const port = await ensureLocalServer();
+        appendDebugLog('ELECTRON', 'Fallback to local server', { port }, 'WARN');
         await mainWindow?.loadURL(`http://localhost:${port}`);
       } finally {
         isFallingBack = false;
@@ -125,6 +128,7 @@ ipcMain.handle('clinic:get-remote-url', () => readRemoteUrl());
 
 ipcMain.handle('clinic:set-remote-url', async (_event, url: string) => {
   const clean = writeRemoteUrl(url || '');
+  appendDebugLog('ELECTRON', 'set-remote-url', { remoteUrl: clean || 'localhost' }, 'INFO');
   try {
     if (clean) {
       await mainWindow?.loadURL(clean);

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Database, GitBranch, Palette, Wifi, X } from 'lucide-react';
+import { logUiEvent } from '../utils/debugLogger';
 import { AppearanceTab } from './settings/AppearanceTab';
 import { NetworkTab } from './settings/NetworkTab';
 import { BackupTab } from './settings/BackupTab';
@@ -58,7 +59,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  logUiEvent('SettingsModal', 'tab_switch', { tab: tab.id });
+                  setActiveTab(tab.id);
+                }}
                 style={
                   active
                     ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)', borderColor: 'var(--border-main)' }

@@ -57,6 +57,7 @@ export function useClinicSync(): void {
 
     evtSource.addEventListener('connected', (e) => {
       useAppStore.getState().setSseConnected(true);
+      sendClientLog('CLIENT_SSE', 'connected', undefined, 'EVENT');
       try {
         const data = JSON.parse((e as MessageEvent).data) as { connectedIps?: string[] };
         if (Array.isArray(data.connectedIps)) {
@@ -72,17 +73,19 @@ export function useClinicSync(): void {
         const data = JSON.parse(e.data) as { connectedIps?: string[] };
         if (Array.isArray(data.connectedIps)) {
           useAppStore.getState().setConnectedPeerIps(data.connectedIps);
-          sendClientLog('CLIENT_SSE', 'peers_changed', { connectedIps: data.connectedIps });
+          sendClientLog('CLIENT_SSE', 'peers_changed', { connectedIps: data.connectedIps }, 'EVENT');
         }
       } catch {}
     });
 
-    evtSource.addEventListener('patients_changed', () => {
+    evtSource.addEventListener('patients_changed', (e) => {
+      sendClientLog('CLIENT_SSE', 'patients_changed', e.data, 'EVENT');
       usePatientsStore.getState().fetchPatients();
       patientSseCallbacks.forEach((cb) => cb());
     });
 
     evtSource.addEventListener('attachments_changed', (e) => {
+      sendClientLog('CLIENT_SSE', 'attachments_changed', e.data, 'EVENT');
       usePatientsStore.getState().fetchPatients();
       try {
         const payload = JSON.parse(e.data);
@@ -95,6 +98,7 @@ export function useClinicSync(): void {
     evtSource.addEventListener('patient_called', (e) => {
       try {
         const payload = JSON.parse(e.data);
+        sendClientLog('CLIENT_SSE', 'patient_called', payload, 'EVENT');
         const { role, triggerCallAlert } = useAppStore.getState();
         if (role === 'secretary' && payload.by === 'doctor') {
           triggerCallAlert(
@@ -109,6 +113,7 @@ export function useClinicSync(): void {
     evtSource.addEventListener('new_message', (e) => {
       try {
         const msg = JSON.parse(e.data) as ClinicMessage;
+        sendClientLog('CLIENT_SSE', 'new_message', { id: msg.id, kind: msg.kind, from: msg.sender_role }, 'EVENT');
         useMessagesStore.getState().appendMessage(msg);
         const { role, notify } = useAppStore.getState();
         if (msg.sender_role !== role && msg.kind !== 'connection_invite') {
@@ -151,7 +156,10 @@ export function useClinicSync(): void {
       } catch {}
     });
 
-    evtSource.onerror = () => useAppStore.getState().setSseConnected(false);
+    evtSource.onerror = () => {
+      sendClientLog('CLIENT_SSE', 'SSE connection error/reconnecting', undefined, 'WARN');
+      useAppStore.getState().setSseConnected(false);
+    };
     return () => evtSource.close();
   }, []);
 }

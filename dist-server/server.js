@@ -65,7 +65,8 @@ app.use((req, res, next) => {
     const start = Date.now();
     const ip = normalizeRemoteIp(req.ip || req.socket.remoteAddress);
     res.on('finish', () => {
-        debugLogger.appendDebugLog('HTTP', `[${ip}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`);
+        const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
+        debugLogger.appendDebugLog('HTTP', `[${ip}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`, undefined, level);
     });
     next();
 });
@@ -94,7 +95,7 @@ function getRemoteConnectedIps() {
     return Array.from(result);
 }
 function broadcastEvent(event, data = {}) {
-    debugLogger.appendDebugLog('SSE_BROADCAST', event, data);
+    debugLogger.appendDebugLog('SSE_BROADCAST', event, data, 'EVENT');
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) {
         try {
@@ -473,10 +474,15 @@ app.post('/api/dev/logs/toggle', (req, res) => {
     return res.json({ ok: true, ...debugLogger.getDebugLogStatus() });
 });
 app.post('/api/dev/logs/append', (req, res) => {
+    if (Array.isArray(req.body?.entries)) {
+        debugLogger.appendDebugBatch(req.body.entries);
+        return res.json({ ok: true });
+    }
     const source = String(req.body?.source || 'CLIENT');
     const message = String(req.body?.message || '');
+    const level = req.body?.level || 'INFO';
     if (message) {
-        debugLogger.appendDebugLog(source, message, req.body?.meta);
+        debugLogger.appendDebugLog(source, message, req.body?.meta, level);
     }
     return res.json({ ok: true });
 });
