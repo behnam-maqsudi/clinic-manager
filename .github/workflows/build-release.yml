@@ -24,9 +24,10 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install dependencies & build
+      - name: Sync version & build
         run: |
           npm install
+          npm version 1.0.${{ github.run_number }} --no-git-tag-version
           npm run build
 
       - name: Package Windows executable

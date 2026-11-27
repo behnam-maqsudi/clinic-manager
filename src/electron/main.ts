@@ -112,6 +112,66 @@ ipcMain.handle('clinic:set-remote-url', async (_event, url: string) => {
   return { ok: true, remoteUrl: clean };
 });
 
+ipcMain.handle('clinic:download-update', async (_event, url: string, fileName: string) => {
+  try {
+    const safeName = path.basename(fileName || 'Clinic-Manager-Update.exe');
+    const destPath = path.join(app.getPath('downloads'), safeName);
+
+    const res = await fetch(url, { headers: { 'User-Agent': 'clinic-manager-app' } });
+    if (!res.ok || !res.body) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const totalBytes = Number(res.headers.get('content-length') || 0);
+    let receivedBytes = 0;
+    const fileStream = fs.createWriteStream(destPath);
+    const reader = res.body.getReader();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        fileStream.write(Buffer.from(value));
+        receivedBytes += value.byteLength;
+        const percent = totalBytes > 0 ? Math.min(99, Math.round((receivedBytes / totalBytes) * 100)) : 50;
+        mainWindow?.webContents.send('clinic:download-progress', {
+          status: 'downloading',
+          percent,
+        });
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      fileStream.end(() => resolve());
+      fileStream.on('error', reject);
+    });
+
+    mainWindow?.webContents.send('clinic:download-progress', {
+      status: 'done',
+      percent: 100,
+      filePath: destPath,
+    });
+    return { ok: true, filePath: destPath };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    mainWindow?.webContents.send('clinic:download-progress', {
+      status: 'error',
+      percent: 0,
+      message,
+    });
+    return { ok: false, message };
+  }
+});
+
+ipcMain.handle('clinic:install-downloaded-update', async (_event, filePath: string) => {
+  if (filePath && fs.existsSync(filePath)) {
+    await shell.openPath(filePath);
+    if (process.platform === 'win32') {
+      setTimeout(() => app.quit(), 800);
+    }
+  }
+});
+
 app.whenReady().then(createWindow).catch((err) => {
   console.error('Electron startup error:', err);
   app.quit();

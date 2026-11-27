@@ -208,6 +208,12 @@ export default function App() {
   const [backupMessage, setBackupMessage] = useState('');
   const [remoteUrlInput, setRemoteUrlInput] = useState('');
   const [activeRemoteUrl, setActiveRemoteUrl] = useState('');
+  const [downloadState, setDownloadState] = useState<{
+    status: 'idle' | 'downloading' | 'done' | 'error';
+    percent: number;
+    filePath?: string;
+    message?: string;
+  }>({ status: 'idle', percent: 0 });
 
   const activeLabIdRef = useRef<number | null>(null);
   activeLabIdRef.current = labModalPatientId;
@@ -241,6 +247,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('clinic_dev_mode', String(devMode));
   }, [devMode]);
+
+  useEffect(() => {
+    if (!window.clinicDesktop?.onDownloadProgress) return;
+    return window.clinicDesktop.onDownloadProgress((payload) => {
+      setDownloadState({
+        status: payload.status,
+        percent: payload.percent,
+        filePath: payload.filePath,
+        message: payload.message,
+      });
+    });
+  }, []);
 
   function toIsoDateString(d: DateObject | null | undefined): string {
     if (!d) return '';
@@ -1651,12 +1669,53 @@ export default function App() {
                   </span>
                 </div>
                 <p style={{ color: 'var(--text-muted)' }} className="text-xs">{gitStatus.message}</p>
+
+                {downloadState.status === 'downloading' && (
+                  <div className="space-y-1.5">
+                    <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                      <div style={{ width: `${downloadState.percent}%`, backgroundColor: 'var(--accent)' }} className="h-full transition-all" />
+                    </div>
+                    <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
+                      در حال دانلود مستقیم نسخه جدید: {toPersianDigits(downloadState.percent)}٪
+                    </p>
+                  </div>
+                )}
+
+                {downloadState.status === 'error' && (
+                  <p className="text-xs text-rose-600 font-medium">خطا در دانلود: {downloadState.message}</p>
+                )}
+
                 <div className="flex flex-wrap gap-2">
                   <button onClick={openSettingsModal} className="px-3.5 py-2 rounded-xl border bg-white text-slate-700 text-xs font-semibold inline-flex items-center gap-1">
                     <RefreshCw className="w-3.5 h-3.5" />
                     بررسی مجدد
                   </button>
-                  {gitStatus.isPackagedApp && gitStatus.releaseUrl ? (
+                  {gitStatus.isPackagedApp && gitStatus.downloadUrl && window.clinicDesktop?.downloadUpdate ? (
+                    downloadState.status === 'done' && downloadState.filePath ? (
+                      <button
+                        onClick={() => window.clinicDesktop?.installDownloadedUpdate(downloadState.filePath!)}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        نصب نسخه جدید ({gitStatus.latestTag})
+                      </button>
+                    ) : (
+                      <button
+                        disabled={downloadState.status === 'downloading'}
+                        onClick={() => {
+                          setDownloadState({ status: 'downloading', percent: 1 });
+                          window.clinicDesktop?.downloadUpdate(gitStatus.downloadUrl!, gitStatus.assetName || 'Clinic-Manager-Update');
+                        }}
+                        style={{ backgroundColor: 'var(--accent)' }}
+                        className="px-4 py-2 rounded-xl text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        {downloadState.status === 'downloading'
+                          ? 'در حال دانلود...'
+                          : `دانلود مستقیم ${gitStatus.latestTag || 'نسخه جدید'}`}
+                      </button>
+                    )
+                  ) : gitStatus.isPackagedApp && gitStatus.releaseUrl ? (
                     <a
                       href={gitStatus.releaseUrl}
                       target="_blank"

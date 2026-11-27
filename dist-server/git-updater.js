@@ -46,6 +46,19 @@ async function getReleaseStatus() {
         const data = (await res.json());
         const latestTag = data.tag_name || '';
         const releaseUrl = data.html_url || `https://github.com/${GITHUB_REPO}/releases`;
+        const assets = data.assets || [];
+        let matchedAsset;
+        if (process.platform === 'win32') {
+            matchedAsset =
+                assets.find((a) => (a.name || '').includes('Setup') && (a.name || '').endsWith('.exe')) ||
+                    assets.find((a) => (a.name || '').endsWith('.exe'));
+        }
+        else if (process.platform === 'darwin') {
+            matchedAsset =
+                assets.find((a) => (a.name || '').includes('universal') && (a.name || '').endsWith('.dmg')) ||
+                    assets.find((a) => (a.name || '').endsWith('.dmg'));
+        }
+        const isUpToDate = latestTag === `v${currentVersion}`;
         return {
             ok: true,
             hasRemote: true,
@@ -54,10 +67,14 @@ async function getReleaseStatus() {
             branch: 'release',
             latestTag,
             releaseUrl,
-            behind: latestTag && latestTag !== `v${currentVersion}` ? 1 : 0,
-            message: latestTag
-                ? `آخرین نسخه منتشرشده در گیت‌هاب: ${latestTag} (نسخه فعلی: v${currentVersion})`
-                : 'نسخه فعلی به‌روز است.',
+            downloadUrl: matchedAsset?.browser_download_url,
+            assetName: matchedAsset?.name,
+            behind: latestTag && !isUpToDate ? 1 : 0,
+            message: isUpToDate
+                ? `برنامه کاملاً به‌روز است (${latestTag}).`
+                : latestTag
+                    ? `نسخه جدید ${latestTag} در گیت‌هاب موجود است (نسخه فعلی: v${currentVersion}).`
+                    : 'نسخه فعلی به‌روز است.',
         };
     }
     catch {

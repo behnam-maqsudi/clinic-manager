@@ -56,6 +56,8 @@ export interface GitUpdateStatus {
   hasRemote: boolean;
   isPackagedApp?: boolean;
   releaseUrl?: string;
+  downloadUrl?: string;
+  assetName?: string;
   latestTag?: string;
   remoteUrl?: string;
   branch?: string;
