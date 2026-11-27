@@ -24,9 +24,12 @@ exports.getBackupFilePath = getBackupFilePath;
 exports.listMessages = listMessages;
 exports.createMessage = createMessage;
 exports.markMessagesRead = markMessagesRead;
+exports.issueDoctorToken = issueDoctorToken;
+exports.verifyDoctorToken = verifyDoctorToken;
 exports.getSetupState = getSetupState;
 exports.completeSetup = completeSetup;
 exports.verifyDoctorPin = verifyDoctorPin;
+exports.resetSetupState = resetSetupState;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const node_crypto_1 = __importDefault(require("node:crypto"));
@@ -483,6 +486,32 @@ function hashPin(pin, salt) {
     const derived = node_crypto_1.default.scryptSync(pin, useSalt, 32).toString('hex');
     return `${useSalt}:${derived}`;
 }
+function getAuthSecret() {
+    let secret = getSetting('auth_secret');
+    if (!secret) {
+        secret = node_crypto_1.default.randomBytes(32).toString('hex');
+        setSetting('auth_secret', secret);
+    }
+    return secret;
+}
+function issueDoctorToken() {
+    const issuedAt = Date.now().toString(36);
+    const payload = `doctor.${issuedAt}`;
+    const sig = node_crypto_1.default.createHmac('sha256', getAuthSecret()).update(payload).digest('hex');
+    return `${payload}.${sig}`;
+}
+function verifyDoctorToken(token) {
+    if (!token)
+        return false;
+    const parts = String(token).trim().split('.');
+    if (parts.length !== 3 || parts[0] !== 'doctor')
+        return false;
+    const payload = `${parts[0]}.${parts[1]}`;
+    const expectedSig = node_crypto_1.default.createHmac('sha256', getAuthSecret()).update(payload).digest('hex');
+    const a = Buffer.from(parts[2], 'hex');
+    const b = Buffer.from(expectedSig, 'hex');
+    return a.length === b.length && node_crypto_1.default.timingSafeEqual(a, b);
+}
 function getSetupState() {
     const setupCompleted = getSetting('setup_completed') === 'true';
     const rawRole = getSetting('primary_role');
@@ -491,13 +520,18 @@ function getSetupState() {
     return { setupCompleted, primaryRole, hasDoctorPin };
 }
 function completeSetup(input) {
-    const pin = String(input.doctorPin || '').trim();
-    if (pin.length < 4) {
-        throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
-    }
     const role = input.primaryRole === 'secretary' ? 'secretary' : 'doctor';
+    if (role === 'doctor') {
+        const pin = String(input.doctorPin || '').trim();
+        if (pin.length < 4) {
+            throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
+        }
+        setSetting('doctor_pin_hash', hashPin(pin));
+    }
+    else {
+        db.prepare("DELETE FROM clinic_settings WHERE key = 'doctor_pin_hash'").run();
+    }
     setSetting('primary_role', role);
-    setSetting('doctor_pin_hash', hashPin(pin));
     setSetting('setup_completed', 'true');
     return getSetupState();
 }
@@ -512,4 +546,8 @@ function verifyDoctorPin(pin) {
     const a = Buffer.from(expectedHex, 'hex');
     const b = Buffer.from(actualHex, 'hex');
     return a.length === b.length && node_crypto_1.default.timingSafeEqual(a, b);
+}
+function resetSetupState() {
+    db.prepare("DELETE FROM clinic_settings WHERE key IN ('setup_completed', 'primary_role', 'doctor_pin_hash')").run();
+    return getSetupState();
 }

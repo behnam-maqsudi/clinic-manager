@@ -308,15 +308,23 @@ app.post('/api/setup', (req, res) => {
   try {
     const current = db.getSetupState();
     const { primaryRole = 'doctor', doctorPin = '', currentPin = '' } = req.body || {};
-    if (current.setupCompleted && current.hasDoctorPin && !db.verifyDoctorPin(String(currentPin || ''))) {
+    const headerToken = req.get('x-doctor-token');
+    if (
+      current.setupCompleted &&
+      current.hasDoctorPin &&
+      !db.verifyDoctorPin(String(currentPin || '')) &&
+      !db.verifyDoctorToken(headerToken)
+    ) {
       return res.status(401).json({ ok: false, message: 'برای تغییر تنظیمات اولیه، رمز فعلی پزشک الزامی است.' });
     }
+    const role = primaryRole === 'secretary' ? 'secretary' : 'doctor';
     const state = db.completeSetup({
-      primaryRole: primaryRole === 'secretary' ? 'secretary' : 'doctor',
-      doctorPin: String(doctorPin || ''),
+      primaryRole: role,
+      doctorPin: role === 'doctor' ? String(doctorPin || '') : undefined,
     });
+    const doctorToken = role === 'doctor' ? db.issueDoctorToken() : '';
     broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
-    return res.json({ ok: true, ...state });
+    return res.json({ ok: true, ...state, doctorToken });
   } catch (err) {
     return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
@@ -328,7 +336,25 @@ app.post('/api/auth/verify-pin', (req, res) => {
   if (!valid) {
     return res.json({ ok: false, valid: false, message: 'رمز عبور پزشک اشتباه است.' });
   }
-  return res.json({ ok: true, valid: true });
+  return res.json({ ok: true, valid: true, doctorToken: db.issueDoctorToken() });
+});
+
+app.get('/api/auth/verify-token', (req, res) => {
+  const token = req.get('x-doctor-token');
+  const valid = db.verifyDoctorToken(token);
+  return res.json({ ok: true, valid });
+});
+
+app.post('/api/dev/reset-setup', (req, res) => {
+  const current = db.getSetupState();
+  const isDevRequest = req.get('x-dev-mode') === 'true';
+  const hasValidToken = db.verifyDoctorToken(req.get('x-doctor-token'));
+  if (current.hasDoctorPin && !isDevRequest && !hasValidToken) {
+    return res.status(403).json({ ok: false, message: 'دسترسی غیرمجاز برای بازنشانی تنظیمات.' });
+  }
+  const state = db.resetSetupState();
+  broadcastEvent('setup_changed', state as unknown as Record<string, unknown>);
+  return res.json({ ok: true, ...state });
 });
 
 // --- Doctor <-> Secretary Messaging ---

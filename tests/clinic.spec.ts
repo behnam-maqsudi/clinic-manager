@@ -23,11 +23,22 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     // Complete initial Setup Wizard if DB is fresh
     const setupHeading = page.getByText('راه‌اندازی اولیه سامانه مطب');
     if (await setupHeading.isVisible({ timeout: 1000 }).catch(() => false)) {
+      // Secretary setup must NOT show Doctor PIN inputs
       await page.getByRole('button', { name: /سیستم منشی/ }).click();
+      await expect(page.getByPlaceholder('مثلاً 1234')).toHaveCount(0);
+
+      // Set up as Doctor with PIN 1234, then switch to Secretary so flow tests PIN switch
+      await page.getByRole('button', { name: /سیستم پزشک/ }).click();
       await page.getByPlaceholder('مثلاً 1234').fill('1234');
       await page.getByPlaceholder('تکرار رمز عبور').fill('1234');
       await page.getByRole('button', { name: 'تأیید و شروع کار' }).click();
       await expect(setupHeading).toHaveCount(0);
+
+      await page.getByRole('button', { name: 'تنظیمات' }).click();
+      await page.getByPlaceholder('رمز عبور پزشک').fill('1234');
+      await page.getByRole('button', { name: 'تغییر به منشی' }).click();
+      await expect(page.getByText('پنل منشی')).toBeVisible();
+      await page.locator('.fixed').getByRole('button').first().click();
     }
 
     // 1. Create patient with file_number + quick note chip
@@ -210,6 +221,10 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     // 6.7. Verify invalid patient ID on attachments returns 404/400 cleanly
     const badAttRes = await page.request.get('/api/patients/not-a-number/attachments');
     expect(badAttRes.status()).toBe(404);
+
+    // 6.8. Verify unauthenticated reset-setup is blocked (403) when doctor PIN is set
+    const unauthReset = await page.request.post('/api/dev/reset-setup');
+    expect(unauthReset.status()).toBe(403);
 
     // 7. Cleanup test patients via API so DB stays clean
     const listRes = await page.request.get('/api/patients?date=all&q=تست E2E');

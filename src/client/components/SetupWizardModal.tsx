@@ -4,7 +4,7 @@ import type { ClinicSetupState, UserRole } from '../../shared/types';
 
 interface SetupWizardModalProps {
   open: boolean;
-  onComplete: (chosenRole: UserRole, state: ClinicSetupState) => void;
+  onComplete: (chosenRole: UserRole, state: ClinicSetupState, doctorToken?: string) => void;
 }
 
 export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
@@ -19,14 +19,17 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    const cleanPin = pin.trim();
-    if (cleanPin.length < 4) {
-      setError('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
-      return;
-    }
-    if (cleanPin !== confirmPin.trim()) {
-      setError('رمز عبور و تکرار آن یکسان نیستند.');
-      return;
+
+    if (selectedRole === 'doctor') {
+      const cleanPin = pin.trim();
+      if (cleanPin.length < 4) {
+        setError('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
+        return;
+      }
+      if (cleanPin !== confirmPin.trim()) {
+        setError('رمز عبور و تکرار آن یکسان نیستند.');
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -34,18 +37,25 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
       const res = await fetch('/api/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ primaryRole: selectedRole, doctorPin: cleanPin }),
+        body: JSON.stringify({
+          primaryRole: selectedRole,
+          ...(selectedRole === 'doctor' ? { doctorPin: pin.trim() } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setError(data.message || 'خطا در ذخیره تنظیمات اولیه');
         return;
       }
-      onComplete(selectedRole, {
-        setupCompleted: Boolean(data.setupCompleted),
-        primaryRole: data.primaryRole || selectedRole,
-        hasDoctorPin: Boolean(data.hasDoctorPin),
-      });
+      onComplete(
+        selectedRole,
+        {
+          setupCompleted: Boolean(data.setupCompleted),
+          primaryRole: data.primaryRole || selectedRole,
+          hasDoctorPin: Boolean(data.hasDoctorPin),
+        },
+        data.doctorToken || ''
+      );
     } catch {
       setError('خطا در ارتباط با سرور');
     } finally {
@@ -79,7 +89,7 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
               راه‌اندازی اولیه سامانه مطب
             </h3>
             <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-0.5">
-              نقش این سیستم و رمز محافظت پنل پزشک را تعیین کنید
+              نقش این سیستم را مشخص کنید
             </p>
           </div>
         </div>
@@ -90,7 +100,10 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
-                onClick={() => setSelectedRole('doctor')}
+                onClick={() => {
+                  setSelectedRole('doctor');
+                  setError('');
+                }}
                 style={{
                   backgroundColor: 'var(--bg-subtle)',
                   borderColor: selectedRole === 'doctor' ? 'var(--accent)' : 'var(--border-main)',
@@ -108,7 +121,10 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
 
               <button
                 type="button"
-                onClick={() => setSelectedRole('secretary')}
+                onClick={() => {
+                  setSelectedRole('secretary');
+                  setError('');
+                }}
                 style={{
                   backgroundColor: 'var(--bg-subtle)',
                   borderColor: selectedRole === 'secretary' ? 'var(--accent)' : 'var(--border-main)',
@@ -126,37 +142,49 @@ export function SetupWizardModal({ open, onComplete }: SetupWizardModalProps) {
             </div>
           </div>
 
-          <div className="space-y-2.5">
-            <label className="block text-xs font-bold flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
-              ۲. تعیین رمز عبور پنل پزشک (حداقل ۴ کاراکتر)
-            </label>
-            <input
-              type="password"
-              dir="ltr"
-              required
-              minLength={4}
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="مثلاً 1234"
+          {selectedRole === 'doctor' ? (
+            <div className="space-y-2.5">
+              <label className="block text-xs font-bold flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+                ۲. تعیین رمز عبور پنل پزشک (حداقل ۴ کاراکتر)
+              </label>
+              <input
+                type="password"
+                dir="ltr"
+                required
+                minLength={4}
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                placeholder="مثلاً 1234"
+                style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                className="w-full rounded-xl border px-3 py-2 text-sm text-left font-mono focus:outline-none"
+              />
+              <input
+                type="password"
+                dir="ltr"
+                required
+                minLength={4}
+                value={confirmPin}
+                onChange={(e) => setConfirmPin(e.target.value)}
+                placeholder="تکرار رمز عبور"
+                style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                className="w-full rounded-xl border px-3 py-2 text-sm text-left font-mono focus:outline-none"
+              />
+              <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
+                از این به بعد ورود یا تغییر به نقش پزشک فقط با همین رمز امکان‌پذیر است.
+              </p>
+            </div>
+          ) : (
+            <div
               style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-              className="w-full rounded-xl border px-3 py-2 text-sm text-left font-mono focus:outline-none"
-            />
-            <input
-              type="password"
-              dir="ltr"
-              required
-              minLength={4}
-              value={confirmPin}
-              onChange={(e) => setConfirmPin(e.target.value)}
-              placeholder="تکرار رمز عبور"
-              style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-              className="w-full rounded-xl border px-3 py-2 text-sm text-left font-mono focus:outline-none"
-            />
-            <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
-              از این به بعد تغییر نقش سیستم فقط از داخل تنظیمات و با همین رمز انجام می‌شود.
-            </p>
-          </div>
+              className="rounded-xl border p-3 text-[11px] leading-5 space-y-1"
+            >
+              <p className="font-bold">دسترسی این سیستم فقط در سطح منشی قفل می‌شود.</p>
+              <p style={{ color: 'var(--text-muted)' }}>
+                در سیستم منشی امکان ساخت رمز پزشک یا ورود به پنل پزشک وجود ندارد. پس از ورود می‌توانید از «تنظیمات ← شبکه و اتصال» به سیستم پزشک متصل شوید.
+              </p>
+            </div>
+          )}
 
           {error && <p className="text-xs text-rose-600 font-semibold">{error}</p>}
 

@@ -5,14 +5,17 @@ import { useAppStore } from '../../store/useAppStore';
 import { usePatientsStore } from '../../store/usePatientsStore';
 import { getTodayIso, THEMES, toPersianDigits } from '../../utils/clinicHelpers';
 
-export function AppearanceTab() {
+export function AppearanceTab({ onClose }: { onClose?: () => void }) {
   const role = useAppStore((s) => s.role);
   const setRole = useAppStore((s) => s.setRole);
+  const doctorToken = useAppStore((s) => s.doctorToken);
+  const setDoctorToken = useAppStore((s) => s.setDoctorToken);
   const theme = useAppStore((s) => s.theme);
   const setTheme = useAppStore((s) => s.setTheme);
   const devMode = useAppStore((s) => s.devMode);
   const setDevMode = useAppStore((s) => s.setDevMode);
   const setupState = useAppStore((s) => s.setupState);
+  const setSetupState = useAppStore((s) => s.setSetupState);
   const notify = useAppStore((s) => s.notify);
   const triggerCallAlert = useAppStore((s) => s.triggerCallAlert);
   const cycleTheme = useAppStore((s) => s.cycleTheme);
@@ -25,6 +28,10 @@ export function AppearanceTab() {
   async function handleProtectedRoleSwitch(targetRole: UserRole) {
     if (targetRole === role) return;
     setRoleSwitchError('');
+    if (targetRole === 'doctor' && !setupState.hasDoctorPin) {
+      setRoleSwitchError('این سیستم فقط برای منشی راه‌اندازی شده و رمز پزشک ندارد.');
+      return;
+    }
     if (!setupState.hasDoctorPin) {
       setRole(targetRole);
       notify(`نقش سیستم به «${targetRole === 'doctor' ? 'پزشک' : 'منشی'}» تغییر کرد.`);
@@ -45,6 +52,9 @@ export function AppearanceTab() {
       if (!res.ok || !data.valid) {
         setRoleSwitchError(data.message || 'رمز عبور پزشک اشتباه است.');
         return;
+      }
+      if (targetRole === 'doctor' && data.doctorToken) {
+        setDoctorToken(data.doctorToken);
       }
       setRole(targetRole);
       setRoleSwitchPin('');
@@ -92,6 +102,35 @@ export function AppearanceTab() {
       fetchPatients();
     } catch {
       notify('خطا در پاک‌سازی بیماران تستی');
+    }
+  }
+
+  async function resetToDayOne() {
+    try {
+      const res = await fetch('/api/dev/reset-setup', {
+        method: 'POST',
+        headers: {
+          'x-dev-mode': String(devMode),
+          ...(doctorToken ? { 'x-doctor-token': doctorToken } : {}),
+        },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        localStorage.removeItem('clinic_role');
+        localStorage.removeItem('clinic_doctor_token');
+        setDoctorToken('');
+        setSetupState({
+          setupCompleted: false,
+          primaryRole: null,
+          hasDoctorPin: false,
+        });
+        onClose?.();
+        notify('وضعیت به روز اول (راه‌اندازی اولیه) بازنشانی شد.');
+      } else {
+        notify(data.message || 'خطا در بازنشانی راه‌اندازی اولیه');
+      }
+    } catch {
+      notify('خطا در بازنشانی راه‌اندازی اولیه');
     }
   }
 
@@ -151,24 +190,27 @@ export function AppearanceTab() {
               className="flex-1 min-w-[140px] rounded-xl border px-3 py-2 text-xs font-mono text-left focus:outline-none"
             />
           )}
-          <button
-            type="button"
-            disabled={verifyingPin || role === 'secretary'}
-            onClick={() => handleProtectedRoleSwitch('secretary')}
-            style={{ backgroundColor: role === 'secretary' ? 'var(--accent)' : 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-            className={`px-3 py-2 rounded-xl border text-xs font-semibold ${role === 'secretary' ? 'text-white' : ''} disabled:opacity-60`}
-          >
-            تغییر به منشی
-          </button>
-          <button
-            type="button"
-            disabled={verifyingPin || role === 'doctor'}
-            onClick={() => handleProtectedRoleSwitch('doctor')}
-            style={{ backgroundColor: role === 'doctor' ? 'var(--accent)' : 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-            className={`px-3 py-2 rounded-xl border text-xs font-semibold ${role === 'doctor' ? 'text-white' : ''} disabled:opacity-60`}
-          >
-            تغییر به پزشک
-          </button>
+          {role === 'doctor' ? (
+            <button
+              type="button"
+              disabled={verifyingPin}
+              onClick={() => handleProtectedRoleSwitch('secretary')}
+              style={{ backgroundColor: 'var(--accent)' }}
+              className="px-4 py-2 rounded-xl text-white text-xs font-semibold disabled:opacity-60"
+            >
+              تغییر به منشی
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={verifyingPin}
+              onClick={() => handleProtectedRoleSwitch('doctor')}
+              style={{ backgroundColor: 'var(--accent)' }}
+              className="px-4 py-2 rounded-xl text-white text-xs font-semibold disabled:opacity-60"
+            >
+              تغییر به پزشک
+            </button>
+          )}
         </div>
         {roleSwitchError && <p className="text-xs text-rose-600 font-semibold">{roleSwitchError}</p>}
       </div>
@@ -209,6 +251,27 @@ export function AppearanceTab() {
               </button>
               <button onClick={cycleTheme} className="px-3 py-1.5 rounded-xl bg-white text-slate-800 border text-xs font-semibold">
                 تغییر سریع تم
+              </button>
+              <button onClick={resetToDayOne} className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold">
+                شروع از روز اول (Setup)
+              </button>
+              <button
+                onClick={() => {
+                  setRole('doctor');
+                  notify('حالت تست: ورود با نقش پزشک');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-white text-slate-800 border text-xs font-semibold"
+              >
+                ورود تست پزشک
+              </button>
+              <button
+                onClick={() => {
+                  setRole('secretary');
+                  notify('حالت تست: ورود با نقش منشی');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-white text-slate-800 border text-xs font-semibold"
+              >
+                ورود تست منشی
               </button>
             </div>
           </div>

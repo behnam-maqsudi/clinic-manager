@@ -74,7 +74,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         </div>
 
         <div className="p-6 space-y-5 overflow-y-auto">
-          {activeTab === 'appearance' && <AppearanceTab />}
+          {activeTab === 'appearance' && <AppearanceTab onClose={onClose} />}
           {activeTab === 'network' && <NetworkTab />}
           {activeTab === 'backup' && <BackupTab />}
           {activeTab === 'update' && <UpdateTab />}

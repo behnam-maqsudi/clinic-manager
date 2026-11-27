@@ -571,6 +571,33 @@ function hashPin(pin: string, salt?: string): string {
   return `${useSalt}:${derived}`;
 }
 
+function getAuthSecret(): string {
+  let secret = getSetting('auth_secret');
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString('hex');
+    setSetting('auth_secret', secret);
+  }
+  return secret;
+}
+
+export function issueDoctorToken(): string {
+  const issuedAt = Date.now().toString(36);
+  const payload = `doctor.${issuedAt}`;
+  const sig = crypto.createHmac('sha256', getAuthSecret()).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+
+export function verifyDoctorToken(token: string | undefined): boolean {
+  if (!token) return false;
+  const parts = String(token).trim().split('.');
+  if (parts.length !== 3 || parts[0] !== 'doctor') return false;
+  const payload = `${parts[0]}.${parts[1]}`;
+  const expectedSig = crypto.createHmac('sha256', getAuthSecret()).update(payload).digest('hex');
+  const a = Buffer.from(parts[2], 'hex');
+  const b = Buffer.from(expectedSig, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export function getSetupState(): ClinicSetupState {
   const setupCompleted = getSetting('setup_completed') === 'true';
   const rawRole = getSetting('primary_role');
@@ -579,14 +606,18 @@ export function getSetupState(): ClinicSetupState {
   return { setupCompleted, primaryRole, hasDoctorPin };
 }
 
-export function completeSetup(input: { primaryRole: UserRole; doctorPin: string }): ClinicSetupState {
-  const pin = String(input.doctorPin || '').trim();
-  if (pin.length < 4) {
-    throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
-  }
+export function completeSetup(input: { primaryRole: UserRole; doctorPin?: string }): ClinicSetupState {
   const role: UserRole = input.primaryRole === 'secretary' ? 'secretary' : 'doctor';
+  if (role === 'doctor') {
+    const pin = String(input.doctorPin || '').trim();
+    if (pin.length < 4) {
+      throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
+    }
+    setSetting('doctor_pin_hash', hashPin(pin));
+  } else {
+    db.prepare("DELETE FROM clinic_settings WHERE key = 'doctor_pin_hash'").run();
+  }
   setSetting('primary_role', role);
-  setSetting('doctor_pin_hash', hashPin(pin));
   setSetting('setup_completed', 'true');
   return getSetupState();
 }
@@ -600,4 +631,9 @@ export function verifyDoctorPin(pin: string): boolean {
   const a = Buffer.from(expectedHex, 'hex');
   const b = Buffer.from(actualHex, 'hex');
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+export function resetSetupState(): ClinicSetupState {
+  db.prepare("DELETE FROM clinic_settings WHERE key IN ('setup_completed', 'primary_role', 'doctor_pin_hash')").run();
+  return getSetupState();
 }

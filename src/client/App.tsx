@@ -42,6 +42,7 @@ export default function App() {
 
   const role = useAppStore((s) => s.role);
   const setRole = useAppStore((s) => s.setRole);
+  const setDoctorToken = useAppStore((s) => s.setDoctorToken);
   const devMode = useAppStore((s) => s.devMode);
   const setupState = useAppStore((s) => s.setupState);
   const setSetupState = useAppStore((s) => s.setSetupState);
@@ -531,8 +532,9 @@ export default function App() {
 
       <SetupWizardModal
         open={!setupState.setupCompleted}
-        onComplete={(chosenRole, state) => {
+        onComplete={(chosenRole, state, token) => {
           setSetupState(state);
+          if (token) setDoctorToken(token);
           setRole(chosenRole);
           notify(`راه‌اندازی اولیه تکمیل شد (${chosenRole === 'doctor' ? 'سیستم پزشک' : 'سیستم منشی'}).`);
         }}

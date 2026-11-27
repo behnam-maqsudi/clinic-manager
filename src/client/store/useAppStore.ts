@@ -10,6 +10,7 @@ export interface InviteBannerData {
 
 interface AppState {
   role: UserRole;
+  doctorToken: string;
   theme: string;
   devMode: boolean;
   setupState: ClinicSetupState;
@@ -18,10 +19,13 @@ interface AppState {
   toast: string;
   callBanner: string;
   inviteBanner: InviteBannerData | null;
+  devNetworkOffline: boolean;
 
   setRole: (role: UserRole) => void;
+  setDoctorToken: (token: string) => void;
   setTheme: (theme: string) => void;
   setDevMode: (devMode: boolean) => void;
+  setDevNetworkOffline: (offline: boolean) => void;
   setSetupState: (state: ClinicSetupState) => void;
   setSseConnected: (connected: boolean) => void;
   setCallBanner: (msg: string) => void;
@@ -49,6 +53,7 @@ const initialClientId =
 
 export const useAppStore = create<AppState>((set, get) => ({
   role: initialRole,
+  doctorToken: localStorage.getItem('clinic_doctor_token') || '',
   theme: initialTheme,
   devMode: localStorage.getItem('clinic_dev_mode') === 'true',
   setupState: { setupCompleted: true, primaryRole: null, hasDoctorPin: false },
@@ -57,10 +62,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   toast: '',
   callBanner: '',
   inviteBanner: null,
+  devNetworkOffline: false,
 
   setRole: (role) => {
     localStorage.setItem('clinic_role', role);
-    set({ role });
+    if (role === 'secretary') {
+      localStorage.removeItem('clinic_doctor_token');
+      set({ role, doctorToken: '' });
+    } else {
+      set({ role });
+    }
+  },
+
+  setDoctorToken: (doctorToken) => {
+    if (doctorToken) {
+      localStorage.setItem('clinic_doctor_token', doctorToken);
+    } else {
+      localStorage.removeItem('clinic_doctor_token');
+    }
+    set({ doctorToken });
   },
 
   setTheme: (theme) => {
@@ -71,8 +91,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setDevMode: (devMode) => {
     localStorage.setItem('clinic_dev_mode', String(devMode));
-    set({ devMode });
+    set({ devMode, ...(devMode ? {} : { devNetworkOffline: false }) });
   },
+
+  setDevNetworkOffline: (devNetworkOffline) => set({ devNetworkOffline }),
 
   setSetupState: (setupState) => set({ setupState }),
   setSseConnected: (sseConnected) => set({ sseConnected }),
@@ -118,13 +140,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch('/api/setup');
       const data = await res.json();
       if (data.ok) {
-        set({
-          setupState: {
-            setupCompleted: Boolean(data.setupCompleted),
-            primaryRole: data.primaryRole || null,
-            hasDoctorPin: Boolean(data.hasDoctorPin),
-          },
-        });
+        const nextSetup = {
+          setupCompleted: Boolean(data.setupCompleted),
+          primaryRole: data.primaryRole || null,
+          hasDoctorPin: Boolean(data.hasDoctorPin),
+        };
+        set({ setupState: nextSetup });
+
+        // Prevent localStorage tampering: verify doctorToken if role is doctor
+        const { role, doctorToken, devMode, setRole, setDoctorToken } = get();
+        if (nextSetup.setupCompleted && role === 'doctor' && !devMode) {
+          if (nextSetup.hasDoctorPin) {
+            if (!doctorToken) {
+              setRole('secretary');
+            } else {
+              const vRes = await fetch('/api/auth/verify-token', {
+                headers: { 'x-doctor-token': doctorToken },
+              });
+              const vData = await vRes.json();
+              if (!vData.valid) {
+                setDoctorToken('');
+                setRole('secretary');
+              }
+            }
+          } else if (nextSetup.primaryRole === 'secretary') {
+            setRole('secretary');
+          }
+        }
       }
     } catch {}
   },
