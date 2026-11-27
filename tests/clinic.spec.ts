@@ -48,6 +48,14 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await row.getByRole('button', { name: 'ویزیت شد ✓' }).click();
     await expect(row.getByText('ویزیت‌شده')).toBeVisible();
 
+    // 3.5. Click patient row to open Full Details modal and update notes
+    await row.click();
+    await expect(page.getByText('یادداشت کامل پزشک / منشی')).toBeVisible();
+    await page.getByPlaceholder('یادداشتی ثبت نشده است...').fill('یادداشت کامل تست جزئیات پرونده');
+    await page.getByRole('button', { name: 'ذخیره یادداشت' }).click();
+    await page.getByRole('button', { name: 'بستن جزئیات' }).click();
+    await expect(row.getByText('یادداشت کامل تست جزئیات پرونده')).toBeVisible();
+
     // 4. Lab attachments & QR Code modal
     await row.getByRole('button', { name: 'افزودن آزمایش' }).click();
     await expect(page.getByText('آپلود سریع با دوربین گوشی')).toBeVisible();

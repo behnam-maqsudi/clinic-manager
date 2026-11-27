@@ -174,6 +174,10 @@ export default function App() {
   const [qrInfo, setQrInfo] = useState({ qrDataUrl: '', uploadUrl: '' });
   const [pcUploadTitle, setPcUploadTitle] = useState('');
 
+  const [detailPatient, setDetailPatient] = useState<Patient | null>(null);
+  const [detailNotes, setDetailNotes] = useState('');
+  const [detailAttachments, setDetailAttachments] = useState<Attachment[]>([]);
+
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkTab, setBulkTab] = useState<'grid' | 'paste'>('grid');
   const [bulkDate, setBulkDate] = useState(getTodayIso());
@@ -351,6 +355,33 @@ export default function App() {
     }
   }
 
+  async function openPatientDetails(p: Patient) {
+    setDetailPatient(p);
+    setDetailNotes(p.notes || '');
+    setDetailAttachments([]);
+    const res = await fetch(`/api/patients/${p.id}/attachments`);
+    const data = await res.json();
+    if (data.ok) {
+      setDetailPatient(data.patient);
+      setDetailAttachments(data.attachments || []);
+    }
+  }
+
+  async function saveDetailNotes() {
+    if (!detailPatient) return;
+    const res = await fetch(`/api/patients/${detailPatient.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: detailNotes, actor_role: role }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setDetailPatient((prev) => (prev?.id === data.patient.id ? data.patient : prev));
+      notify('یادداشت پرونده ذخیره شد.');
+      fetchPatients();
+    }
+  }
+
   async function quickStatus(id: number, status: PatientStatus) {
     const res = await fetch(`/api/patients/${id}`, {
       method: 'PUT',
@@ -359,6 +390,7 @@ export default function App() {
     });
     const data = await res.json();
     if (data.ok) {
+      setDetailPatient((prev) => (prev?.id === id ? data.patient : prev));
       notify('وضعیت مراجعه‌کننده بروزرسانی شد.');
       fetchPatients();
     }
@@ -724,7 +756,11 @@ export default function App() {
                     const st = STATUS_META[p.status] || STATUS_META.waiting;
                     const timeLabel = p.visit_time ? toPersianDigits(p.visit_time) : toPersianDigits(idx + 1);
                     return (
-                      <tr key={p.id} className="hover:bg-slate-500/5 transition-colors">
+                      <tr
+                        key={p.id}
+                        onClick={() => openPatientDetails(p)}
+                        className="hover:bg-slate-500/10 transition-colors cursor-pointer"
+                      >
                         <td className="py-3.5 px-4 font-bold tabular-nums">{timeLabel}</td>
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-2.5">
@@ -757,7 +793,10 @@ export default function App() {
                         </td>
                         <td className="py-3.5 px-4">
                           <button
-                            onClick={() => openLabModal(p.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openLabModal(p.id);
+                            }}
                             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${
                               (p.attachment_count ?? 0) > 0
                                 ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
@@ -774,24 +813,57 @@ export default function App() {
                         <td className="py-3.5 px-4 text-left">
                           <div className="inline-flex items-center gap-1">
                             {p.status === 'waiting' && (
-                              <button onClick={() => quickStatus(p.id, 'in_progress')} style={{ backgroundColor: 'var(--accent)' }} className="px-2.5 py-1.5 rounded-lg text-white text-xs font-semibold">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  quickStatus(p.id, 'in_progress');
+                                }}
+                                style={{ backgroundColor: 'var(--accent)' }}
+                                className="px-2.5 py-1.5 rounded-lg text-white text-xs font-semibold"
+                              >
                                 شروع ویزیت
                               </button>
                             )}
                             {p.status === 'in_progress' && (
-                              <button onClick={() => quickStatus(p.id, 'visited')} className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  quickStatus(p.id, 'visited');
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                              >
                                 ویزیت شد ✓
                               </button>
                             )}
                             {p.visit_date !== getTodayIso() && (
-                              <button onClick={() => rebookToday(p)} className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  rebookToday(p);
+                                }}
+                                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold"
+                              >
                                 نوبت امروز
                               </button>
                             )}
-                            <button onClick={() => openEditPatientModal(p)} className="p-1.5 rounded-lg hover:bg-slate-500/10" title="ویرایش">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditPatientModal(p);
+                              }}
+                              className="p-1.5 rounded-lg hover:bg-slate-500/10"
+                              title="ویرایش"
+                            >
                               <Pencil className="w-4 h-4 text-slate-400" />
                             </button>
-                            <button onClick={() => removePatient(p.id)} className="p-1.5 rounded-lg hover:bg-rose-500/10" title="حذف">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removePatient(p.id);
+                              }}
+                              className="p-1.5 rounded-lg hover:bg-rose-500/10"
+                              title="حذف"
+                            >
                               <Trash2 className="w-4 h-4 text-rose-500" />
                             </button>
                           </div>
@@ -1422,6 +1494,169 @@ export default function App() {
                   </a>
                 </div>
                 {backupMessage && <p className="text-xs text-emerald-600 font-semibold">{backupMessage}</p>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 6: Patient Full Details */}
+      {detailPatient && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-2xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent-soft-text)' }} className="w-11 h-11 rounded-full font-bold text-base flex items-center justify-center shrink-0">
+                  {(detailPatient.full_name || '?').trim().charAt(0)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-bold text-base">{detailPatient.full_name}</h3>
+                    {detailPatient.file_number && (
+                      <span style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="px-2.5 py-0.5 rounded-lg border text-xs font-bold tabular-nums">
+                        پرونده {toPersianDigits(detailPatient.file_number)}
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-0.5">
+                    ثبت توسط {detailPatient.created_by === 'doctor' ? 'پزشک' : 'منشی'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    const p = detailPatient;
+                    setDetailPatient(null);
+                    openEditPatientModal(p);
+                  }}
+                  style={{ borderColor: 'var(--border-main)' }}
+                  className="px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  ویرایش کامل
+                </button>
+                <button aria-label="بستن جزئیات" onClick={() => setDetailPatient(null)} className="p-1.5 rounded-lg hover:bg-slate-500/10">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto">
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>شماره تماس</p>
+                  <p className="font-mono font-bold mt-1" dir="ltr">{detailPatient.phone || '—'}</p>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>کد ملی</p>
+                  <p className="font-mono font-bold mt-1" dir="ltr">{detailPatient.national_id || '—'}</p>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>تاریخ شمسی</p>
+                  <p className="font-bold mt-1 tabular-nums">{formatShamsiDate(detailPatient.visit_date)}</p>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="p-3 rounded-xl border">
+                  <p style={{ color: 'var(--text-muted)' }}>ساعت نوبت</p>
+                  <p className="font-bold mt-1 tabular-nums">{detailPatient.visit_time ? toPersianDigits(detailPatient.visit_time) : '—'}</p>
+                </div>
+              </div>
+
+              {/* Quick Status Switcher */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold">وضعیت ویزیت</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['waiting', 'in_progress', 'visited', 'cancelled'] as PatientStatus[]).map((stKey) => {
+                    const meta = STATUS_META[stKey];
+                    const active = detailPatient.status === stKey;
+                    return (
+                      <button
+                        key={stKey}
+                        onClick={() => quickStatus(detailPatient.id, stKey)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all inline-flex items-center gap-1.5 ${
+                          active ? `${meta.badge} border-current shadow-2xs` : 'bg-transparent border-slate-300/60 opacity-70 hover:opacity-100'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Full Notes Editor */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold">یادداشت کامل پزشک / منشی</label>
+                <textarea
+                  rows={4}
+                  value={detailNotes}
+                  onChange={(e) => setDetailNotes(e.target.value)}
+                  style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                  className="w-full rounded-xl border p-3 text-sm leading-6 focus:outline-none"
+                  placeholder="یادداشتی ثبت نشده است..."
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {QUICK_NOTES.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => setDetailNotes((n) => (n.trim() ? `${n.trim()} • ${chip}` : chip))}
+                        style={{ backgroundColor: 'var(--bg-subtle)' }}
+                        className="px-2.5 py-1 rounded-full text-[11px] hover:opacity-80"
+                      >
+                        + {chip}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={saveDetailNotes}
+                    style={{ backgroundColor: 'var(--accent)' }}
+                    className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
+                  >
+                    ذخیره یادداشت
+                  </button>
+                </div>
+              </div>
+
+              {/* Attachments Preview */}
+              <div style={{ borderColor: 'var(--border-main)' }} className="border-t pt-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold">مدارک و آزمایش‌ها ({toPersianDigits(detailAttachments.length)} مورد)</h4>
+                  <button
+                    onClick={() => {
+                      const id = detailPatient.id;
+                      setDetailPatient(null);
+                      openLabModal(id);
+                    }}
+                    style={{ color: 'var(--accent)' }}
+                    className="text-xs font-semibold inline-flex items-center gap-1 hover:underline"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    مدیریت فایل‌ها / اسکن QR موبایل
+                  </button>
+                </div>
+                {detailAttachments.length > 0 ? (
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {detailAttachments.map((att) => (
+                      <a
+                        key={att.id}
+                        href={`/api/attachments/${att.id}/file`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
+                        className="flex items-center justify-between p-2.5 rounded-xl border text-xs hover:opacity-90"
+                      >
+                        <span className="truncate font-semibold">{att.title || att.original_name}</span>
+                        <Eye className="w-4 h-4 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: 'var(--text-muted)' }} className="text-xs">مدرکی پیوست نشده است.</p>
+                )}
               </div>
             </div>
           </div>
