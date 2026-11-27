@@ -206,6 +206,8 @@ export default function App() {
     behind: 0,
   });
   const [backupMessage, setBackupMessage] = useState('');
+  const [remoteUrlInput, setRemoteUrlInput] = useState('');
+  const [activeRemoteUrl, setActiveRemoteUrl] = useState('');
 
   const activeLabIdRef = useRef<number | null>(null);
   activeLabIdRef.current = labModalPatientId;
@@ -603,6 +605,15 @@ export default function App() {
   async function openSettingsModal() {
     setSettingsModalOpen(true);
     setBackupMessage('');
+    if (window.clinicDesktop?.isElectron) {
+      window.clinicDesktop
+        .getRemoteUrl()
+        .then((u) => {
+          setActiveRemoteUrl(u || '');
+          setRemoteUrlInput(u || '');
+        })
+        .catch(() => {});
+    }
     const [updRes, healthRes] = await Promise.all([fetch('/api/update/status'), fetch('/api/health')]);
     const updData = await updRes.json();
     const healthData = await healthRes.json();
@@ -1556,6 +1567,55 @@ export default function App() {
                 )}
               </div>
 
+              {/* Electron Client Connection (Connect this Mac/PC app to main clinic server) */}
+              {window.clinicDesktop?.isElectron && (
+                <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-2xl border p-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Wifi className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                      <h4 className="text-sm font-bold">اتصال این برنامه به سیستم سرور مطب</h4>
+                    </div>
+                    {activeRemoteUrl && (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">متصل به سرور</span>
+                    )}
+                  </div>
+                  <p style={{ color: 'var(--text-muted)' }} className="text-[11px]">
+                    اگر این سیستم (مثلاً مک یا اتاق پزشک) باید به دیتابیس سیستم منشی وصل شود، آدرس نمایش‌داده‌شده در سیستم منشی را اینجا وارد کنید:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={remoteUrlInput}
+                      onChange={(e) => setRemoteUrlInput(e.target.value)}
+                      placeholder="http://192.168.8.7:3000"
+                      style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                      className="flex-1 min-w-[180px] rounded-xl border px-3 py-2 text-xs font-mono text-left focus:outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        const raw = remoteUrlInput.trim();
+                        if (!raw) return;
+                        const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+                        window.clinicDesktop?.setRemoteUrl(normalized);
+                      }}
+                      style={{ backgroundColor: 'var(--accent)' }}
+                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
+                    >
+                      اتصال به سرور
+                    </button>
+                    {activeRemoteUrl && (
+                      <button
+                        onClick={() => window.clinicDesktop?.setRemoteUrl('')}
+                        className="px-3 py-2 rounded-xl border bg-white text-slate-700 text-xs font-semibold"
+                      >
+                        بازگشت به دیتابیس محلی
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Clinic Second PC Connection */}
               {lanUrls.length > 0 && (
                 <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-2xl border p-4 space-y-2.5">
@@ -1596,10 +1656,24 @@ export default function App() {
                     <RefreshCw className="w-3.5 h-3.5" />
                     بررسی مجدد
                   </button>
-                  {gitStatus.ok && gitStatus.behind > 0 && (
-                    <button onClick={applyGitUpdate} style={{ backgroundColor: 'var(--accent)' }} className="px-4 py-2 rounded-xl text-white text-xs font-semibold">
-                      دریافت و نصب بروزرسانی
-                    </button>
+                  {gitStatus.isPackagedApp && gitStatus.releaseUrl ? (
+                    <a
+                      href={gitStatus.releaseUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ backgroundColor: 'var(--accent)' }}
+                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      صفحه دانلود نسخه جدید
+                    </a>
+                  ) : (
+                    gitStatus.ok &&
+                    gitStatus.behind > 0 && (
+                      <button onClick={applyGitUpdate} style={{ backgroundColor: 'var(--accent)' }} className="px-4 py-2 rounded-xl text-white text-xs font-semibold">
+                        دریافت و نصب بروزرسانی
+                      </button>
+                    )
                   )}
                 </div>
               </div>

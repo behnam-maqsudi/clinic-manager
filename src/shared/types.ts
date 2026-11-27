@@ -54,6 +54,9 @@ export interface Attachment {
 export interface GitUpdateStatus {
   ok: boolean;
   hasRemote: boolean;
+  isPackagedApp?: boolean;
+  releaseUrl?: string;
+  latestTag?: string;
   remoteUrl?: string;
   branch?: string;
   commit?: string;

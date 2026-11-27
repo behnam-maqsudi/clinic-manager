@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { exec } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -5,12 +6,76 @@ import type { GitUpdateStatus } from './shared/types';
 
 const execAsync = promisify(exec);
 const ROOT_DIR = path.join(__dirname, '..');
+const GITHUB_REPO = 'behnam-maqsudi/clinic-manager';
 
 async function runGit(args: string) {
   return execAsync(`git ${args}`, { cwd: ROOT_DIR, windowsHide: true });
 }
 
+function getAppVersion(): string {
+  try {
+    const pkgPath = path.join(ROOT_DIR, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string };
+    return pkg.version || '1.0.0';
+  } catch {
+    return '1.0.0';
+  }
+}
+
+async function getReleaseStatus(): Promise<GitUpdateStatus> {
+  const currentVersion = getAppVersion();
+  try {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+      headers: { 'User-Agent': 'clinic-manager-app' },
+    });
+    if (!res.ok) {
+      return {
+        ok: true,
+        hasRemote: true,
+        isPackagedApp: true,
+        commit: `v${currentVersion}`,
+        branch: 'release',
+        behind: 0,
+        releaseUrl: `https://github.com/${GITHUB_REPO}/releases`,
+        message: 'نسخه فعلی نصب است. برای بررسی نسخه‌های جدید به صفحه Releases گیت‌هاب مراجعه کنید.',
+      };
+    }
+    const data = (await res.json()) as { tag_name?: string; html_url?: string };
+    const latestTag = data.tag_name || '';
+    const releaseUrl = data.html_url || `https://github.com/${GITHUB_REPO}/releases`;
+    return {
+      ok: true,
+      hasRemote: true,
+      isPackagedApp: true,
+      commit: `v${currentVersion}`,
+      branch: 'release',
+      latestTag,
+      releaseUrl,
+      behind: latestTag && latestTag !== `v${currentVersion}` ? 1 : 0,
+      message: latestTag
+        ? `آخرین نسخه منتشرشده در گیت‌هاب: ${latestTag} (نسخه فعلی: v${currentVersion})`
+        : 'نسخه فعلی به‌روز است.',
+    };
+  } catch {
+    return {
+      ok: true,
+      hasRemote: true,
+      isPackagedApp: true,
+      commit: `v${currentVersion}`,
+      branch: 'release',
+      behind: 0,
+      releaseUrl: `https://github.com/${GITHUB_REPO}/releases`,
+      message: 'عدم دسترسی به اینترنت یا گیت‌هاب برای بررسی نسخه جدید.',
+    };
+  }
+}
+
 export async function getGitStatus(): Promise<GitUpdateStatus> {
+  const isAsarOrNoGit = ROOT_DIR.includes('.asar') || !fs.existsSync(path.join(ROOT_DIR, '.git'));
+  if (isAsarOrNoGit) {
+    return getReleaseStatus();
+  }
+
   try {
     const { stdout: branchOut } = await runGit('rev-parse --abbrev-ref HEAD');
     const branch = branchOut.trim();
@@ -76,6 +141,15 @@ export async function applyGitUpdate(): Promise<{
   packageChanged?: boolean;
   message: string;
 }> {
+  const isAsarOrNoGit = ROOT_DIR.includes('.asar') || !fs.existsSync(path.join(ROOT_DIR, '.git'));
+  if (isAsarOrNoGit) {
+    return {
+      ok: false,
+      updated: false,
+      message: 'در نسخه نصبی دسکتاپ، نسخه جدید را از صفحه Releases گیت‌هاب دانلود و نصب کنید.',
+    };
+  }
+
   const status = await getGitStatus();
   if (!status.ok) {
     return { ok: false, updated: false, message: status.message };
