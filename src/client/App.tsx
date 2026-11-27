@@ -18,6 +18,7 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Copy,
   Database,
@@ -698,72 +699,93 @@ export default function App() {
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex p-1 rounded-xl border">
+          <div className="flex flex-wrap items-center gap-2.5 text-xs">
+            <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex items-center p-1 rounded-xl border gap-1">
               <button
                 onClick={() => { setDateFilter('today'); setCustomRange([]); }}
                 style={dateFilter === 'today' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-3.5 py-1.5 rounded-lg font-semibold"
+                className="px-3.5 py-1.5 rounded-lg font-semibold transition-all"
               >
                 امروز
               </button>
               <button
                 onClick={() => { setDateFilter('all'); setCustomRange([]); }}
                 style={dateFilter === 'all' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
-                className="px-3.5 py-1.5 rounded-lg font-semibold"
+                className="px-3.5 py-1.5 rounded-lg font-semibold transition-all"
               >
                 همه روزها
               </button>
-            </div>
 
-            <DatePicker
-              range
-              calendar={persian}
-              locale={persian_fa}
-              calendarPosition="bottom-center"
-              value={customRange}
-              onChange={(val) => {
-                const arr = Array.isArray(val) ? val : val ? [val] : [];
-                setCustomRange(arr as DateObject[]);
-                setDateFilter(arr.length > 0 ? 'custom' : 'today');
-              }}
-              render={(_value, openCalendar) => {
-                const label =
-                  dateFilter === 'custom' && customRange.length > 0
+              <DatePicker
+                range
+                calendar={persian}
+                locale={persian_fa}
+                calendarPosition="bottom-center"
+                value={customRange}
+                onChange={(val) => {
+                  const arr = Array.isArray(val) ? val : val ? [val] : [];
+                  setCustomRange(arr as DateObject[]);
+                  setDateFilter(arr.length > 0 ? 'custom' : 'today');
+                }}
+                render={(_value, openCalendar) => {
+                  const isCustom = dateFilter === 'custom' && customRange.length > 0;
+                  const label = isCustom
                     ? customRange.length === 2
                       ? `${customRange[0].format('YYYY/MM/DD')} تا ${customRange[1].format('YYYY/MM/DD')}`
                       : customRange[0].format('YYYY/MM/DD')
                     : 'انتخاب تاریخ شمسی';
-                return (
-                  <button
-                    type="button"
-                    onClick={openCalendar}
-                    style={{
-                      backgroundColor: dateFilter === 'custom' ? 'var(--accent-soft)' : 'var(--bg-card)',
-                      borderColor: dateFilter === 'custom' ? 'var(--accent)' : 'var(--border-main)',
-                      color: dateFilter === 'custom' ? 'var(--accent-soft-text)' : 'var(--text-main)',
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border cursor-pointer font-medium"
-                  >
-                    <Calendar className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-                    <span>{label}</span>
-                  </button>
-                );
-              }}
-            />
+                  return (
+                    <div
+                      style={
+                        isCustom
+                          ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' }
+                          : { color: 'var(--text-muted)' }
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg transition-all"
+                    >
+                      <button
+                        type="button"
+                        onClick={openCalendar}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold cursor-pointer"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>{label}</span>
+                      </button>
+                      {isCustom && (
+                        <button
+                          type="button"
+                          aria-label="پاک کردن فیلتر تاریخ"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCustomRange([]);
+                            setDateFilter('today');
+                          }}
+                          className="pl-2 pr-0.5 py-1 hover:opacity-70"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                }}
+              />
+            </div>
 
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | PatientStatus)}
-              style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
-              className="px-3.5 py-2 rounded-xl border text-xs font-medium focus:outline-none cursor-pointer"
-            >
-              <option value="all">همه وضعیت‌ها</option>
-              <option value="waiting">در انتظار</option>
-              <option value="in_progress">در حال ویزیت</option>
-              <option value="visited">ویزیت‌شده</option>
-              <option value="cancelled">لغو شده</option>
-            </select>
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as 'all' | PatientStatus)}
+                style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }}
+                className="appearance-none pr-3.5 pl-8 py-2.5 rounded-xl border text-xs font-medium focus:outline-none cursor-pointer"
+              >
+                <option value="all">همه وضعیت‌ها</option>
+                <option value="waiting">در انتظار</option>
+                <option value="in_progress">در حال ویزیت</option>
+                <option value="visited">ویزیت‌شده</option>
+                <option value="cancelled">لغو شده</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 pointer-events-none absolute left-2.5 top-2.5" />
+            </div>
           </div>
         </section>
 
