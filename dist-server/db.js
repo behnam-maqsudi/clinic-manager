@@ -18,8 +18,21 @@ exports.addAttachment = addAttachment;
 exports.deleteAttachment = deleteAttachment;
 exports.createBackup = createBackup;
 exports.getDbPath = getDbPath;
+exports.listBackups = listBackups;
+exports.restoreDatabaseFromFile = restoreDatabaseFromFile;
+exports.getBackupFilePath = getBackupFilePath;
+exports.listMessages = listMessages;
+exports.createMessage = createMessage;
+exports.markMessagesRead = markMessagesRead;
+exports.issueDoctorToken = issueDoctorToken;
+exports.verifyDoctorToken = verifyDoctorToken;
+exports.getSetupState = getSetupState;
+exports.completeSetup = completeSetup;
+exports.verifyDoctorPin = verifyDoctorPin;
+exports.resetSetupState = resetSetupState;
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const node_sqlite_1 = require("node:sqlite");
 const DATA_DIR = process.env.CLINIC_DATA_DIR
     ? node_path_1.default.resolve(process.env.CLINIC_DATA_DIR)
@@ -30,48 +43,73 @@ const DB_PATH = node_path_1.default.join(DATA_DIR, 'clinic.db');
 node_fs_1.default.mkdirSync(DATA_DIR, { recursive: true });
 node_fs_1.default.mkdirSync(BACKUP_DIR, { recursive: true });
 node_fs_1.default.mkdirSync(exports.UPLOADS_DIR, { recursive: true });
-const db = new node_sqlite_1.DatabaseSync(DB_PATH);
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
+function initSchema(database) {
+    database.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
 
-  CREATE TABLE IF NOT EXISTS patients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_number TEXT NOT NULL DEFAULT '',
-    full_name TEXT NOT NULL,
-    phone TEXT NOT NULL DEFAULT '',
-    national_id TEXT NOT NULL DEFAULT '',
-    visit_date TEXT NOT NULL,
-    visit_time TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'in_progress', 'visited', 'cancelled')),
-    notes TEXT NOT NULL DEFAULT '',
-    created_by TEXT NOT NULL DEFAULT 'secretary' CHECK (created_by IN ('secretary', 'doctor')),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
+    CREATE TABLE IF NOT EXISTS patients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_number TEXT NOT NULL DEFAULT '',
+      full_name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      national_id TEXT NOT NULL DEFAULT '',
+      visit_date TEXT NOT NULL,
+      visit_time TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'in_progress', 'visited', 'cancelled')),
+      notes TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL DEFAULT 'secretary' CHECK (created_by IN ('secretary', 'doctor')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
 
-  CREATE TABLE IF NOT EXISTS attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    patient_id INTEGER NOT NULL,
-    original_name TEXT NOT NULL,
-    stored_name TEXT NOT NULL,
-    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-    size_bytes INTEGER NOT NULL DEFAULT 0,
-    title TEXT NOT NULL DEFAULT '',
-    uploaded_by TEXT NOT NULL DEFAULT 'secretary',
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
-  );
+    CREATE TABLE IF NOT EXISTS attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      patient_id INTEGER NOT NULL,
+      original_name TEXT NOT NULL,
+      stored_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      title TEXT NOT NULL DEFAULT '',
+      uploaded_by TEXT NOT NULL DEFAULT 'secretary',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+    );
 
-  CREATE INDEX IF NOT EXISTS idx_patients_visit_date ON patients(visit_date);
-  CREATE INDEX IF NOT EXISTS idx_patients_status ON patients(status);
-  CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
-`);
-const columns = db.prepare('PRAGMA table_info(patients)').all();
-if (!columns.some((col) => col.name === 'file_number')) {
-    db.exec("ALTER TABLE patients ADD COLUMN file_number TEXT NOT NULL DEFAULT '';");
+    CREATE INDEX IF NOT EXISTS idx_patients_visit_date ON patients(visit_date);
+    CREATE INDEX IF NOT EXISTS idx_patients_status ON patients(status);
+    CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
+
+    CREATE TABLE IF NOT EXISTS clinic_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_role TEXT NOT NULL CHECK (sender_role IN ('secretary', 'doctor', 'system')),
+      recipient_role TEXT NOT NULL DEFAULT 'all' CHECK (recipient_role IN ('secretary', 'doctor', 'all')),
+      body TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'connection_invite')),
+      meta_json TEXT NOT NULL DEFAULT '{}',
+      read_at TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clinic_messages_created_at ON clinic_messages(created_at);
+
+    CREATE TABLE IF NOT EXISTS clinic_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+    const columns = database.prepare('PRAGMA table_info(patients)').all();
+    if (!columns.some((col) => col.name === 'file_number')) {
+        database.exec("ALTER TABLE patients ADD COLUMN file_number TEXT NOT NULL DEFAULT '';");
+    }
+    database.exec('CREATE INDEX IF NOT EXISTS idx_patients_file_number ON patients(file_number);');
 }
-db.exec('CREATE INDEX IF NOT EXISTS idx_patients_file_number ON patients(file_number);');
+function openDatabase() {
+    const database = new node_sqlite_1.DatabaseSync(DB_PATH);
+    initSchema(database);
+    return database;
+}
+let db = openDatabase();
 function normalizeDigits(value) {
     if (!value)
         return '';
@@ -310,4 +348,206 @@ function createBackup() {
 function getDbPath() {
     db.exec('PRAGMA wal_checkpoint(PASSIVE);');
     return DB_PATH;
+}
+function listBackups() {
+    if (!node_fs_1.default.existsSync(BACKUP_DIR))
+        return [];
+    return node_fs_1.default
+        .readdirSync(BACKUP_DIR)
+        .filter((f) => f.startsWith('clinic-') && f.endsWith('.db'))
+        .sort()
+        .reverse()
+        .map((name) => {
+        const stat = node_fs_1.default.statSync(node_path_1.default.join(BACKUP_DIR, name));
+        return {
+            name,
+            sizeBytes: stat.size,
+            createdAt: stat.mtime.toISOString(),
+        };
+    });
+}
+function restoreDatabaseFromFile(sourcePath) {
+    if (!node_fs_1.default.existsSync(sourcePath)) {
+        throw new Error('فایل بکاپ پیدا نشد.');
+    }
+    const header = Buffer.alloc(16);
+    const fd = node_fs_1.default.openSync(sourcePath, 'r');
+    try {
+        node_fs_1.default.readSync(fd, header, 0, 16, 0);
+    }
+    finally {
+        node_fs_1.default.closeSync(fd);
+    }
+    if (!header.toString('utf8').startsWith('SQLite format 3')) {
+        throw new Error('فایل انتخاب‌شده یک دیتابیس معتبر SQLite نیست.');
+    }
+    // Validate schema before replacing live DB
+    const probe = new node_sqlite_1.DatabaseSync(sourcePath, { readOnly: true });
+    let patientCount = 0;
+    try {
+        const tbl = probe
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='patients'")
+            .get();
+        if (!tbl?.name) {
+            throw new Error('این فایل متعلق به سامانه مطب نیست (جدول بیماران یافت نشد).');
+        }
+        const countRow = probe.prepare('SELECT COUNT(*) AS cnt FROM patients').get();
+        patientCount = Number(countRow?.cnt || 0);
+    }
+    finally {
+        probe.close();
+    }
+    // Save safety backup of current DB first
+    createBackup();
+    db.close();
+    try {
+        for (const suffix of ['-wal', '-shm']) {
+            const walPath = `${DB_PATH}${suffix}`;
+            if (node_fs_1.default.existsSync(walPath))
+                node_fs_1.default.unlinkSync(walPath);
+        }
+        node_fs_1.default.copyFileSync(sourcePath, DB_PATH);
+    }
+    finally {
+        db = openDatabase();
+    }
+    return { patientCount };
+}
+function getBackupFilePath(fileName) {
+    const safe = node_path_1.default.basename(fileName);
+    if (!safe.startsWith('clinic-') || !safe.endsWith('.db'))
+        return null;
+    const full = node_path_1.default.join(BACKUP_DIR, safe);
+    return node_fs_1.default.existsSync(full) ? full : null;
+}
+function hydrateMessage(row) {
+    let meta = {};
+    try {
+        meta = JSON.parse(row.meta_json || '{}');
+    }
+    catch {
+        meta = {};
+    }
+    return {
+        id: row.id,
+        sender_role: row.sender_role,
+        recipient_role: row.recipient_role,
+        body: row.body,
+        kind: row.kind,
+        meta,
+        read_at: row.read_at,
+        created_at: row.created_at,
+    };
+}
+function listMessages(limit = 60) {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 60));
+    const rows = db
+        .prepare('SELECT * FROM clinic_messages ORDER BY id DESC LIMIT ?')
+        .all(safeLimit);
+    return rows.reverse().map(hydrateMessage);
+}
+function createMessage(input) {
+    const body = String(input.body || '').trim();
+    if (!body) {
+        throw new Error('متن پیام نمی‌تواند خالی باشد.');
+    }
+    const senderRole = input.sender_role === 'doctor' || input.sender_role === 'system' ? input.sender_role : 'secretary';
+    const recipientRole = input.recipient_role === 'doctor' || input.recipient_role === 'secretary' ? input.recipient_role : 'all';
+    const kind = input.kind === 'connection_invite' ? 'connection_invite' : 'chat';
+    const metaJson = JSON.stringify(input.meta || {});
+    const now = new Date().toISOString();
+    const res = db
+        .prepare(`INSERT INTO clinic_messages (sender_role, recipient_role, body, kind, meta_json, read_at, created_at)
+       VALUES (?, ?, ?, ?, ?, '', ?)`)
+        .run(senderRole, recipientRole, body, kind, metaJson, now);
+    const created = db
+        .prepare('SELECT * FROM clinic_messages WHERE id = ?')
+        .get(Number(res.lastInsertRowid));
+    return hydrateMessage(created);
+}
+function markMessagesRead(role) {
+    const now = new Date().toISOString();
+    const res = db
+        .prepare(`UPDATE clinic_messages
+       SET read_at = ?
+       WHERE read_at = '' AND (recipient_role = ? OR recipient_role = 'all') AND sender_role != ?`)
+        .run(now, role, role);
+    return Number(res.changes || 0);
+}
+function getSetting(key) {
+    const row = db.prepare('SELECT value FROM clinic_settings WHERE key = ?').get(key);
+    return row?.value || '';
+}
+function setSetting(key, value) {
+    db.prepare('INSERT INTO clinic_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+}
+function hashPin(pin, salt) {
+    const useSalt = salt || node_crypto_1.default.randomBytes(16).toString('hex');
+    const derived = node_crypto_1.default.scryptSync(pin, useSalt, 32).toString('hex');
+    return `${useSalt}:${derived}`;
+}
+function getAuthSecret() {
+    let secret = getSetting('auth_secret');
+    if (!secret) {
+        secret = node_crypto_1.default.randomBytes(32).toString('hex');
+        setSetting('auth_secret', secret);
+    }
+    return secret;
+}
+function issueDoctorToken() {
+    const issuedAt = Date.now().toString(36);
+    const payload = `doctor.${issuedAt}`;
+    const sig = node_crypto_1.default.createHmac('sha256', getAuthSecret()).update(payload).digest('hex');
+    return `${payload}.${sig}`;
+}
+function verifyDoctorToken(token) {
+    if (!token)
+        return false;
+    const parts = String(token).trim().split('.');
+    if (parts.length !== 3 || parts[0] !== 'doctor')
+        return false;
+    const payload = `${parts[0]}.${parts[1]}`;
+    const expectedSig = node_crypto_1.default.createHmac('sha256', getAuthSecret()).update(payload).digest('hex');
+    const a = Buffer.from(parts[2], 'hex');
+    const b = Buffer.from(expectedSig, 'hex');
+    return a.length === b.length && node_crypto_1.default.timingSafeEqual(a, b);
+}
+function getSetupState() {
+    const setupCompleted = getSetting('setup_completed') === 'true';
+    const rawRole = getSetting('primary_role');
+    const primaryRole = rawRole === 'doctor' || rawRole === 'secretary' ? rawRole : null;
+    const hasDoctorPin = Boolean(getSetting('doctor_pin_hash'));
+    return { setupCompleted, primaryRole, hasDoctorPin };
+}
+function completeSetup(input) {
+    const role = input.primaryRole === 'secretary' ? 'secretary' : 'doctor';
+    if (role === 'doctor') {
+        const pin = String(input.doctorPin || '').trim();
+        if (pin.length < 4) {
+            throw new Error('رمز عبور پزشک باید حداقل ۴ کاراکتر باشد.');
+        }
+        setSetting('doctor_pin_hash', hashPin(pin));
+    }
+    else {
+        db.prepare("DELETE FROM clinic_settings WHERE key = 'doctor_pin_hash'").run();
+    }
+    setSetting('primary_role', role);
+    setSetting('setup_completed', 'true');
+    return getSetupState();
+}
+function verifyDoctorPin(pin) {
+    const stored = getSetting('doctor_pin_hash');
+    if (!stored)
+        return false;
+    const [salt, expectedHex] = stored.split(':');
+    if (!salt || !expectedHex)
+        return false;
+    const actualHex = node_crypto_1.default.scryptSync(String(pin || '').trim(), salt, 32).toString('hex');
+    const a = Buffer.from(expectedHex, 'hex');
+    const b = Buffer.from(actualHex, 'hex');
+    return a.length === b.length && node_crypto_1.default.timingSafeEqual(a, b);
+}
+function resetSetupState() {
+    db.prepare("DELETE FROM clinic_settings WHERE key IN ('setup_completed', 'primary_role', 'doctor_pin_hash')").run();
+    return getSetupState();
 }

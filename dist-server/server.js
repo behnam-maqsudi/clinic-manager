@@ -103,10 +103,26 @@ function getPrimaryBaseUrl(req) {
     }
     return `http://localhost:${PORT}`;
 }
+function parsePositiveId(raw) {
+    const num = Number(raw);
+    return Number.isInteger(num) && num > 0 ? num : null;
+}
+function decodeOriginalFilename(rawName) {
+    const name = rawName || 'file';
+    if (/[^\u0000-\u00ff]/.test(name)) {
+        return name;
+    }
+    const decoded = Buffer.from(name, 'latin1').toString('utf8');
+    return decoded.includes('\uFFFD') ? name : decoded;
+}
 const storage = multer_1.default.diskStorage({
     destination(req, _file, cb) {
-        const patientId = String(Number(req.params.id));
-        const dir = node_path_1.default.join(db.UPLOADS_DIR, patientId);
+        const numId = parsePositiveId(req.params.id);
+        if (!numId) {
+            cb(new Error('شناسه مراجعه‌کننده نامعتبر است.'), '');
+            return;
+        }
+        const dir = node_path_1.default.join(db.UPLOADS_DIR, String(numId));
         node_fs_1.default.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
@@ -121,6 +137,13 @@ const upload = (0, multer_1.default)({
     limits: {
         fileSize: 20 * 1024 * 1024,
         files: 10,
+    },
+});
+const backupUpload = (0, multer_1.default)({
+    dest: node_path_1.default.join(node_os_1.default.tmpdir(), 'clinic-backup-uploads'),
+    limits: {
+        fileSize: 100 * 1024 * 1024,
+        files: 1,
     },
 });
 // --- SSE Endpoint ---
@@ -151,11 +174,220 @@ app.get('/api/health', (_req, res) => {
     res.json({
         ok: true,
         clinic: 'مطب دکتر بهامین جهانیان',
+        hostname: node_os_1.default.hostname(),
         port: PORT,
         lanIps,
         urls: lanIps.map((ip) => `http://${ip}:${PORT}`),
         localUrl: `http://localhost:${PORT}`,
     });
+});
+// --- LAN Peer Discovery & Connection Invites ---
+app.get('/api/network/discover', async (_req, res) => {
+    const selfIps = getLanIps();
+    const selfIpSet = new Set(selfIps);
+    const subnets = Array.from(new Set(selfIps.map((ip) => ip.split('.').slice(0, 3).join('.'))));
+    if (subnets.length === 0) {
+        return res.json({ ok: true, selfIps, peers: [] });
+    }
+    const candidateIps = [];
+    for (const subnet of subnets.slice(0, 2)) {
+        for (let host = 1; host <= 254; host += 1) {
+            candidateIps.push(`${subnet}.${host}`);
+        }
+    }
+    const peers = [];
+    const batchSize = 50;
+    for (let i = 0; i < candidateIps.length; i += batchSize) {
+        const batch = candidateIps.slice(i, i + batchSize);
+        const results = await Promise.all(batch.map(async (ip) => {
+            const url = `http://${ip}:${PORT}`;
+            try {
+                const resp = await fetch(`${url}/api/health`, {
+                    signal: AbortSignal.timeout(350),
+                });
+                if (!resp.ok)
+                    return null;
+                const data = (await resp.json());
+                if (!data?.ok || !data?.clinic)
+                    return null;
+                return {
+                    ip,
+                    url,
+                    clinic: data.clinic,
+                    hostname: data.hostname || ip,
+                    port: Number(data.port) || PORT,
+                    isSelf: selfIpSet.has(ip),
+                };
+            }
+            catch {
+                return null;
+            }
+        }));
+        for (const item of results) {
+            if (item)
+                peers.push(item);
+        }
+    }
+    peers.sort((a, b) => Number(a.isSelf) - Number(b.isSelf) || a.ip.localeCompare(b.ip));
+    return res.json({ ok: true, selfIps, peers });
+});
+app.post('/api/network/invite', (req, res) => {
+    try {
+        const { fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '' } = req.body || {};
+        const senderLabel = String(fromName || '').trim() || 'سیستم همکار در شبکه';
+        const cleanUrl = String(fromUrl || '').trim();
+        const cleanMsg = String(message || '').trim() ||
+            `درخواست اتصال از طرف «${senderLabel}»${cleanUrl ? ` (${cleanUrl})` : ''}`;
+        const saved = db.createMessage({
+            sender_role: fromRole === 'doctor' ? 'doctor' : 'secretary',
+            recipient_role: 'all',
+            body: cleanMsg,
+            kind: 'connection_invite',
+            meta: { fromName: senderLabel, fromUrl: cleanUrl },
+        });
+        broadcastEvent('new_message', saved);
+        broadcastEvent('connection_invite', {
+            id: saved.id,
+            fromName: senderLabel,
+            fromUrl: cleanUrl,
+            fromRole,
+            senderClientId: String(senderClientId || ''),
+            message: cleanMsg,
+            created_at: saved.created_at,
+        });
+        return res.status(201).json({ ok: true, message: saved });
+    }
+    catch (err) {
+        return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/network/send-invite', async (req, res) => {
+    try {
+        const { targetUrl = '', fromName = '', fromUrl = '', fromRole = 'secretary', message = '', senderClientId = '', } = req.body || {};
+        const cleanTarget = String(targetUrl || '').trim().replace(/\/+$/, '');
+        let parsed;
+        try {
+            parsed = new URL(cleanTarget);
+        }
+        catch {
+            return res.status(400).json({ ok: false, message: 'آدرس سیستم مقصد معتبر نیست.' });
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return res.status(400).json({ ok: false, message: 'فقط آدرس‌های http/https پشتیبانی می‌شوند.' });
+        }
+        const lanIps = getLanIps();
+        const selfUrl = fromUrl || (lanIps[0] ? `http://${lanIps[0]}:${PORT}` : `http://localhost:${PORT}`);
+        const senderName = String(fromName || '').trim() || node_os_1.default.hostname();
+        const resp = await fetch(`${cleanTarget}/api/network/invite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fromName: senderName,
+                fromUrl: selfUrl,
+                fromRole,
+                senderClientId: String(senderClientId || ''),
+                message: String(message || '').trim() || `لطفاً به سیستم مطب (${selfUrl}) متصل شوید.`,
+            }),
+            signal: AbortSignal.timeout(3500),
+        });
+        if (!resp.ok) {
+            return res.status(502).json({ ok: false, message: `سیستم مقصد پاسخ خطا داد (HTTP ${resp.status}).` });
+        }
+        return res.json({ ok: true, message: 'پیام اتصال به سیستم مقصد ارسال شد.' });
+    }
+    catch (err) {
+        return res.status(502).json({
+            ok: false,
+            message: err instanceof Error ? `عدم دسترسی به سیستم مقصد: ${err.message}` : 'عدم دسترسی به سیستم مقصد.',
+        });
+    }
+});
+// --- Initial Setup & Role PIN Auth ---
+app.get('/api/setup', (_req, res) => {
+    res.json({ ok: true, ...db.getSetupState() });
+});
+app.post('/api/setup', (req, res) => {
+    try {
+        const current = db.getSetupState();
+        const { primaryRole = 'doctor', doctorPin = '', currentPin = '' } = req.body || {};
+        const headerToken = req.get('x-doctor-token');
+        if (current.setupCompleted &&
+            current.hasDoctorPin &&
+            !db.verifyDoctorPin(String(currentPin || '')) &&
+            !db.verifyDoctorToken(headerToken)) {
+            return res.status(401).json({ ok: false, message: 'برای تغییر تنظیمات اولیه، رمز فعلی پزشک الزامی است.' });
+        }
+        const role = primaryRole === 'secretary' ? 'secretary' : 'doctor';
+        const state = db.completeSetup({
+            primaryRole: role,
+            doctorPin: role === 'doctor' ? String(doctorPin || '') : undefined,
+        });
+        const doctorToken = role === 'doctor' ? db.issueDoctorToken() : '';
+        broadcastEvent('setup_changed', state);
+        return res.json({ ok: true, ...state, doctorToken });
+    }
+    catch (err) {
+        return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/auth/verify-pin', (req, res) => {
+    const pin = String(req.body?.pin || '');
+    const valid = db.verifyDoctorPin(pin);
+    if (!valid) {
+        return res.json({ ok: false, valid: false, message: 'رمز عبور پزشک اشتباه است.' });
+    }
+    return res.json({ ok: true, valid: true, doctorToken: db.issueDoctorToken() });
+});
+app.get('/api/auth/verify-token', (req, res) => {
+    const token = req.get('x-doctor-token');
+    const valid = db.verifyDoctorToken(token);
+    return res.json({ ok: true, valid });
+});
+app.post('/api/dev/reset-setup', (req, res) => {
+    const current = db.getSetupState();
+    const isDevRequest = req.get('x-dev-mode') === 'true';
+    const hasValidToken = db.verifyDoctorToken(req.get('x-doctor-token'));
+    if (current.hasDoctorPin && !isDevRequest && !hasValidToken) {
+        return res.status(403).json({ ok: false, message: 'دسترسی غیرمجاز برای بازنشانی تنظیمات.' });
+    }
+    const state = db.resetSetupState();
+    broadcastEvent('setup_changed', state);
+    return res.json({ ok: true, ...state });
+});
+// --- Doctor <-> Secretary Messaging ---
+app.get('/api/messages', (req, res) => {
+    try {
+        const limit = Number(req.query.limit) || 60;
+        const messages = db.listMessages(limit);
+        res.json({ ok: true, messages });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/messages', (req, res) => {
+    try {
+        const { sender_role = 'secretary', recipient_role = 'all', body = '', kind = 'chat', meta = {} } = req.body || {};
+        const saved = db.createMessage({ sender_role, recipient_role, body, kind, meta });
+        broadcastEvent('new_message', saved);
+        res.status(201).json({ ok: true, message: saved });
+    }
+    catch (err) {
+        res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/messages/read', (req, res) => {
+    try {
+        const role = req.body?.role === 'doctor' ? 'doctor' : 'secretary';
+        const updated = db.markMessagesRead(role);
+        if (updated > 0) {
+            broadcastEvent('messages_read', { role, updated });
+        }
+        res.json({ ok: true, updated });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
 });
 // --- Patients CRUD ---
 app.get('/api/patients', (req, res) => {
@@ -275,7 +507,7 @@ app.post('/api/patients/:id/attachments', (req, res) => {
         const uploadedBy = String(req.body?.uploaded_by || 'secretary').trim();
         const saved = [];
         for (const file of uploadedFiles) {
-            const originalName = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8');
+            const originalName = decodeOriginalFilename(file.originalname);
             const record = db.addAttachment({
                 patientId: patient.id,
                 originalName,
@@ -336,11 +568,20 @@ app.get('/api/patients/:id/qr', async (req, res) => {
         return res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
     }
 });
-// --- Backup ---
+// --- Backup & Restore / Import ---
 app.post('/api/backup/create', (_req, res) => {
     try {
         const file = db.createBackup();
         res.json({ ok: true, file: node_path_1.default.basename(file), message: 'نسخه پشتیبان با موفقیت ذخیره شد.' });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.get('/api/backup/list', (_req, res) => {
+    try {
+        const backups = db.listBackups();
+        res.json({ ok: true, backups });
     }
     catch (err) {
         res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
@@ -354,6 +595,124 @@ app.get('/api/backup/download', (_req, res) => {
     }
     catch (err) {
         res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+app.post('/api/backup/restore', (req, res) => {
+    backupUpload.single('file')(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({ ok: false, message: `خطا در آپلود فایل بکاپ: ${err.message}` });
+        }
+        const uploaded = req.file;
+        if (!uploaded) {
+            return res.status(400).json({ ok: false, message: 'هیچ فایل بکاپی انتخاب نشده است.' });
+        }
+        try {
+            const result = db.restoreDatabaseFromFile(uploaded.path);
+            broadcastEvent('patients_changed', { action: 'restore' });
+            broadcastEvent('setup_changed', db.getSetupState());
+            return res.json({
+                ok: true,
+                patientCount: result.patientCount,
+                message: `دیتابیس با موفقیت بازیابی شد (${result.patientCount} پرونده بیمار).`,
+            });
+        }
+        catch (restoreErr) {
+            return res.status(400).json({
+                ok: false,
+                message: restoreErr instanceof Error ? restoreErr.message : String(restoreErr),
+            });
+        }
+        finally {
+            if (node_fs_1.default.existsSync(uploaded.path)) {
+                node_fs_1.default.unlinkSync(uploaded.path);
+            }
+        }
+    });
+});
+app.post('/api/backup/restore-server', (req, res) => {
+    try {
+        const fileName = String(req.body?.fileName || '').trim();
+        const backupPath = db.getBackupFilePath(fileName);
+        if (!backupPath) {
+            return res.status(404).json({ ok: false, message: 'فایل بکاپ روی سرور یافت نشد.' });
+        }
+        const result = db.restoreDatabaseFromFile(backupPath);
+        broadcastEvent('patients_changed', { action: 'restore' });
+        broadcastEvent('setup_changed', db.getSetupState());
+        return res.json({
+            ok: true,
+            patientCount: result.patientCount,
+            message: `بکاپ با موفقیت بازیابی شد (${result.patientCount} پرونده بیمار).`,
+        });
+    }
+    catch (err) {
+        return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+});
+function normalizeExternalDownloadUrl(rawUrl) {
+    const clean = rawUrl.trim();
+    // Convert Google Drive share URL: https://drive.google.com/file/d/<ID>/view...
+    const gdriveMatch = clean.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (gdriveMatch?.[1]) {
+        return `https://drive.google.com/uc?export=download&id=${gdriveMatch[1]}`;
+    }
+    const gdriveOpenMatch = clean.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+    if (gdriveOpenMatch?.[1]) {
+        return `https://drive.google.com/uc?export=download&id=${gdriveOpenMatch[1]}`;
+    }
+    return clean;
+}
+app.post('/api/backup/import-url', async (req, res) => {
+    const rawUrl = String(req.body?.url || '').trim();
+    if (!rawUrl) {
+        return res.status(400).json({ ok: false, message: 'لینک فایل بکاپ را وارد کنید.' });
+    }
+    let parsed;
+    try {
+        parsed = new URL(normalizeExternalDownloadUrl(rawUrl));
+    }
+    catch {
+        return res.status(400).json({ ok: false, message: 'لینک واردشده معتبر نیست.' });
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return res.status(400).json({ ok: false, message: 'فقط لینک‌های http/https پشتیبانی می‌شوند.' });
+    }
+    const tempDir = node_path_1.default.join(node_os_1.default.tmpdir(), 'clinic-backup-uploads');
+    node_fs_1.default.mkdirSync(tempDir, { recursive: true });
+    const tempFile = node_path_1.default.join(tempDir, `import-${Date.now()}.db`);
+    try {
+        const resp = await fetch(parsed.toString(), { signal: AbortSignal.timeout(15000) });
+        if (!resp.ok) {
+            return res.status(502).json({ ok: false, message: `خطا در دریافت فایل از لینک (HTTP ${resp.status}).` });
+        }
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+            return res.status(400).json({
+                ok: false,
+                message: 'لینک Google Drive یا سرور مقصد خصوصی است یا صفحه وب برگرداند. لطفاً دسترسی لینک را عمومی کنید یا فایل را دانلود و از گزینه انتخاب فایل ایمپورت کنید.',
+            });
+        }
+        const buf = Buffer.from(await resp.arrayBuffer());
+        node_fs_1.default.writeFileSync(tempFile, buf);
+        const result = db.restoreDatabaseFromFile(tempFile);
+        broadcastEvent('patients_changed', { action: 'restore' });
+        broadcastEvent('setup_changed', db.getSetupState());
+        return res.json({
+            ok: true,
+            patientCount: result.patientCount,
+            message: `دیتابیس از لینک با موفقیت ایمپورت شد (${result.patientCount} پرونده بیمار).`,
+        });
+    }
+    catch (err) {
+        return res.status(400).json({
+            ok: false,
+            message: err instanceof Error ? err.message : 'خطا در ایمپورت دیتابیس از لینک',
+        });
+    }
+    finally {
+        if (node_fs_1.default.existsSync(tempFile)) {
+            node_fs_1.default.unlinkSync(tempFile);
+        }
     }
 });
 // --- Git Self-Update ---

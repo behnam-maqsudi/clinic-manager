@@ -7,6 +7,7 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     for (const p of data.patients || []) {
       await request.delete(`/api/patients/${p.id}`);
     }
+    await request.post('/api/dev/reset-setup', { headers: { 'x-dev-mode': 'true' } });
   });
 
   test('full clinic workflow: create, search, status, attachments/QR, bulk import, themes & dev mode', async ({ page }) => {
@@ -19,6 +20,27 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'مطب دکتر بهامین جهانیان' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'شبکه مطب' })).toHaveCount(0);
+
+    // Complete initial Setup Wizard if DB is fresh
+    const setupHeading = page.getByText('راه‌اندازی اولیه سامانه مطب');
+    if (await setupHeading.isVisible({ timeout: 1000 }).catch(() => false)) {
+      // Secretary setup must NOT show Doctor PIN inputs
+      await page.getByRole('button', { name: /سیستم منشی/ }).click();
+      await expect(page.getByPlaceholder('مثلاً 1234')).toHaveCount(0);
+
+      // Set up as Doctor with PIN 1234, then switch to Secretary so flow tests PIN switch
+      await page.getByRole('button', { name: /سیستم پزشک/ }).click();
+      await page.getByPlaceholder('مثلاً 1234').fill('1234');
+      await page.getByPlaceholder('تکرار رمز عبور').fill('1234');
+      await page.getByRole('button', { name: 'تأیید و شروع کار' }).click();
+      await expect(setupHeading).toHaveCount(0);
+
+      await page.getByRole('button', { name: 'تنظیمات' }).click();
+      await page.getByPlaceholder('رمز عبور پزشک').fill('1234');
+      await page.getByRole('button', { name: 'تغییر به منشی' }).click();
+      await expect(page.getByText('پنل منشی')).toBeVisible();
+      await page.locator('.fixed').getByRole('button').first().click();
+    }
 
     // 1. Create patient with file_number + quick note chip
     await page.getByRole('button', { name: 'ثبت مراجعه‌کننده' }).click();
@@ -61,8 +83,19 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await page.getByRole('button', { name: 'پاک کردن فیلتر تاریخ' }).click();
     await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toBeVisible();
 
-    // 3. Doctor role + status progression
-    await page.getByRole('button', { name: 'پزشک', exact: true }).click();
+    // 3. Doctor role (via PIN in Settings) + status progression
+    await page.getByRole('button', { name: 'تنظیمات' }).click();
+    const pinInput = page.getByPlaceholder('رمز عبور پزشک');
+    if (await pinInput.isVisible().catch(() => false)) {
+      await pinInput.fill('0000');
+      await page.getByRole('button', { name: 'تغییر به پزشک' }).click();
+      await expect(page.getByText('رمز عبور پزشک اشتباه است.')).toBeVisible();
+      await pinInput.fill('1234');
+    }
+    await page.getByRole('button', { name: 'تغییر به پزشک' }).click();
+    await expect(page.getByText('پنل پزشک')).toBeVisible();
+    await page.locator('.fixed').getByRole('button').first().click();
+
     const row = page.locator('tr', { hasText: 'تست E2E علی رضایی' });
     await row.getByRole('button', { name: 'شروع ویزیت' }).click();
     await expect(row.getByText('در حال ویزیت')).toBeVisible();
@@ -123,6 +156,76 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
 
     // Close settings
     await page.locator('.fixed').getByRole('button').first().click();
+
+    // 6.5. Doctor <-> Secretary messaging + unread badge
+    await page.getByRole('button', { name: 'پیام‌ها' }).click();
+    await expect(page.getByText('پیام‌های داخلی مطب (پزشک ⇄ منشی)')).toBeVisible();
+    await page.getByRole('button', { name: 'بیمار بعدی را بفرستید' }).click();
+    await expect(page.getByText('بیمار بعدی را بفرستید').first()).toBeVisible();
+    await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
+
+    // Switch to Secretary (via PIN in Settings) -> should see unread badge and reply
+    await page.getByRole('button', { name: 'تنظیمات' }).click();
+    const secPinInput = page.getByPlaceholder('رمز عبور پزشک');
+    if (await secPinInput.isVisible().catch(() => false)) {
+      await secPinInput.fill('1234');
+    }
+    await page.getByRole('button', { name: 'تغییر به منشی' }).click();
+    await expect(page.getByText('پنل منشی')).toBeVisible();
+    await page.locator('.fixed').getByRole('button').first().click();
+
+    await page.getByRole('button', { name: /پیام‌ها/ }).click();
+    await page.getByPlaceholder('پیام به پزشک بنویسید...').fill('بیمار آماده ورود است');
+    await page.getByRole('button', { name: 'ارسال', exact: true }).click();
+    await expect(page.getByText('بیمار آماده ورود است').last()).toBeVisible();
+    await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
+
+    // 6.6. LAN Discovery & Backup/Import tab in Settings + incoming connection invite banner via SSE
+    await page.getByRole('button', { name: 'تنظیمات' }).click();
+    await page.getByRole('button', { name: 'شبکه و اتصال' }).click();
+    await page.getByRole('button', { name: 'جستجو در شبکه' }).click();
+    await expect(page.getByRole('button', { name: 'جستجو در شبکه' })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: 'بکاپ و دیتابیس' }).click();
+    await expect(page.getByText('ایمپورت و بازیابی دیتابیس')).toBeVisible();
+    await expect(page.getByPlaceholder('https://drive.google.com/file/d/.../view')).toBeVisible();
+    await page.getByRole('button', { name: 'ذخیره بکاپ در سرور' }).click();
+    await expect(page.getByText('نسخه پشتیبان با موفقیت ذخیره شد.')).toBeVisible();
+    await page.locator('.fixed').getByRole('button').first().click();
+
+    // Verify invalid backup file upload is rejected cleanly with 400
+    const badRestoreRes = await page.request.post('/api/backup/restore', {
+      multipart: {
+        file: {
+          name: 'not-a-db.db',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from('invalid content'),
+        },
+      },
+    });
+    expect(badRestoreRes.status()).toBe(400);
+
+    // Simulate incoming connection invite from another PC on the LAN
+    const inviteRes = await page.request.post('/api/network/invite', {
+      data: {
+        fromName: 'سیستم مک دکتر',
+        fromUrl: 'http://192.168.8.99:3000',
+        fromRole: 'doctor',
+        message: 'درخواست اتصال تست شبکه',
+      },
+    });
+    expect(inviteRes.ok()).toBe(true);
+    await expect(page.getByText('درخواست اتصال از سیستم مک دکتر')).toBeVisible();
+    await expect(page.getByText('درخواست اتصال تست شبکه', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'بستن اعلان اتصال' }).click();
+
+    // 6.7. Verify invalid patient ID on attachments returns 404/400 cleanly
+    const badAttRes = await page.request.get('/api/patients/not-a-number/attachments');
+    expect(badAttRes.status()).toBe(404);
+
+    // 6.8. Verify unauthenticated reset-setup is blocked (403) when doctor PIN is set
+    const unauthReset = await page.request.post('/api/dev/reset-setup');
+    expect(unauthReset.status()).toBe(403);
 
     // 7. Cleanup test patients via API so DB stays clean
     const listRes = await page.request.get('/api/patients?date=all&q=تست E2E');
