@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node dist-server/server.js",
     "dev": "vite",
-    "electron": "npm run build && electron .",
+    "electron": "npm run build && node -e \"const{spawn}=require('node:child_process');const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const c=spawn(require('electron'),['.'],{stdio:'inherit',env});c.on('exit',code=>process.exit(code??0));\"",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
