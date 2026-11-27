@@ -40,6 +40,13 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await expect(page.getByText('هنوز مراجعه‌کننده‌ای در این لیست ثبت نشده است')).toBeVisible();
     await searchInput.fill('');
 
+    // 2.5. Shamsi DatePicker opens and filters
+    await page.getByRole('button', { name: 'انتخاب تاریخ شمسی' }).click();
+    await expect(page.locator('.rmdp-wrapper')).toBeVisible();
+    await page.locator('.rmdp-day.rmdp-today span').first().click();
+    await page.getByRole('button', { name: 'امروز', exact: true }).click();
+    await expect(page.locator('table').getByText('تست E2E علی رضایی', { exact: true })).toBeVisible();
+
     // 3. Doctor role + status progression
     await page.getByRole('button', { name: 'پزشک', exact: true }).click();
     const row = page.locator('tr', { hasText: 'تست E2E علی رضایی' });

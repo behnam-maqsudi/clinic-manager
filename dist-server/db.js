@@ -86,10 +86,18 @@ function normalizeStatus(value, fallback = 'waiting') {
         ? value
         : fallback;
 }
-function listPatients({ q = '', date = '', status = '' } = {}) {
+function listPatients({ q = '', date = '', dateFrom = '', dateTo = '', status = '', } = {}) {
     const conditions = [];
     const params = [];
-    if (date && date !== 'all') {
+    if (dateFrom && dateTo) {
+        conditions.push('p.visit_date >= ? AND p.visit_date <= ?');
+        params.push(dateFrom, dateTo);
+    }
+    else if (dateFrom) {
+        conditions.push('p.visit_date = ?');
+        params.push(dateFrom);
+    }
+    else if (date && date !== 'all') {
         conditions.push('p.visit_date = ?');
         params.push(date);
     }

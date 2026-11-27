@@ -75,11 +75,29 @@ function normalizeStatus(value: unknown, fallback: PatientStatus = 'waiting'): P
     : fallback;
 }
 
-export function listPatients({ q = '', date = '', status = '' } = {}): Patient[] {
+export function listPatients({
+  q = '',
+  date = '',
+  dateFrom = '',
+  dateTo = '',
+  status = '',
+}: {
+  q?: string;
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  status?: string;
+} = {}): Patient[] {
   const conditions: string[] = [];
   const params: string[] = [];
 
-  if (date && date !== 'all') {
+  if (dateFrom && dateTo) {
+    conditions.push('p.visit_date >= ? AND p.visit_date <= ?');
+    params.push(dateFrom, dateTo);
+  } else if (dateFrom) {
+    conditions.push('p.visit_date = ?');
+    params.push(dateFrom);
+  } else if (date && date !== 'all') {
     conditions.push('p.visit_date = ?');
     params.push(date);
   }

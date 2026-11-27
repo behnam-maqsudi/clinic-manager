@@ -1,4 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import DatePicker, { DateObject } from 'react-multi-date-picker';
+import persian from 'react-date-object/calendars/persian';
+import persian_fa from 'react-date-object/locales/persian_fa';
+import gregorian from 'react-date-object/calendars/gregorian';
+import gregorian_en from 'react-date-object/locales/gregorian_en';
 import type {
   Attachment,
   GitUpdateStatus,
@@ -137,7 +142,7 @@ export default function App() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [query, setQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<'today' | 'all' | 'custom'>('today');
-  const [customDate, setCustomDate] = useState('');
+  const [customRange, setCustomRange] = useState<DateObject[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | PatientStatus>('all');
   const [sseConnected, setSseConnected] = useState(true);
 
@@ -226,13 +231,33 @@ export default function App() {
     localStorage.setItem('clinic_dev_mode', String(devMode));
   }, [devMode]);
 
+  function toIsoDateString(d: DateObject | null | undefined): string {
+    if (!d) return '';
+    return new DateObject(d).convert(gregorian, gregorian_en).format('YYYY-MM-DD');
+  }
+
+  function isoToPersianDateObj(iso: string): DateObject {
+    const [y, m, d] = (iso || getTodayIso()).split('-').map(Number);
+    return new DateObject({ year: y, month: m, day: d, calendar: gregorian, locale: gregorian_en }).convert(
+      persian,
+      persian_fa
+    );
+  }
+
   async function fetchPatients() {
     const params = new URLSearchParams();
     if (query.trim()) params.set('q', query.trim());
     if (statusFilter !== 'all') params.set('status', statusFilter);
-    if (dateFilter === 'today') params.set('date', getTodayIso());
-    else if (dateFilter === 'custom' && customDate) params.set('date', customDate);
-    else params.set('date', 'all');
+    if (dateFilter === 'today') {
+      params.set('date', getTodayIso());
+    } else if (dateFilter === 'custom' && customRange.length > 0) {
+      const fromIso = toIsoDateString(customRange[0]);
+      const toIso = customRange[1] ? toIsoDateString(customRange[1]) : fromIso;
+      params.set('date_from', fromIso);
+      params.set('date_to', toIso);
+    } else {
+      params.set('date', 'all');
+    }
 
     const res = await fetch(`/api/patients?${params.toString()}`);
     const data = await res.json();
@@ -244,7 +269,7 @@ export default function App() {
   useEffect(() => {
     const t = setTimeout(fetchPatients, 120);
     return () => clearTimeout(t);
-  }, [query, dateFilter, customDate, statusFilter]);
+  }, [query, dateFilter, customRange, statusFilter]);
 
   // SSE Live Sync
   useEffect(() => {
@@ -676,14 +701,14 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <div style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="flex p-1 rounded-xl border">
               <button
-                onClick={() => { setDateFilter('today'); setCustomDate(''); }}
+                onClick={() => { setDateFilter('today'); setCustomRange([]); }}
                 style={dateFilter === 'today' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
                 className="px-3.5 py-1.5 rounded-lg font-semibold"
               >
                 امروز
               </button>
               <button
-                onClick={() => { setDateFilter('all'); setCustomDate(''); }}
+                onClick={() => { setDateFilter('all'); setCustomRange([]); }}
                 style={dateFilter === 'all' ? { backgroundColor: 'var(--bg-card)', color: 'var(--accent)' } : { color: 'var(--text-muted)' }}
                 className="px-3.5 py-1.5 rounded-lg font-semibold"
               >
@@ -691,21 +716,41 @@ export default function App() {
               </button>
             </div>
 
-            <label style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border cursor-pointer">
-              <Calendar className="w-4 h-4" style={{ color: 'var(--accent)' }} />
-              <span>{dateFilter === 'custom' && customDate ? formatShamsiDate(customDate) : 'انتخاب تاریخ'}</span>
-              <input
-                type="date"
-                value={customDate}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setCustomDate(e.target.value);
-                    setDateFilter('custom');
-                  }
-                }}
-                className="sr-only"
-              />
-            </label>
+            <DatePicker
+              range
+              calendar={persian}
+              locale={persian_fa}
+              calendarPosition="bottom-center"
+              value={customRange}
+              onChange={(val) => {
+                const arr = Array.isArray(val) ? val : val ? [val] : [];
+                setCustomRange(arr as DateObject[]);
+                setDateFilter(arr.length > 0 ? 'custom' : 'today');
+              }}
+              render={(_value, openCalendar) => {
+                const label =
+                  dateFilter === 'custom' && customRange.length > 0
+                    ? customRange.length === 2
+                      ? `${customRange[0].format('YYYY/MM/DD')} تا ${customRange[1].format('YYYY/MM/DD')}`
+                      : customRange[0].format('YYYY/MM/DD')
+                    : 'انتخاب تاریخ شمسی';
+                return (
+                  <button
+                    type="button"
+                    onClick={openCalendar}
+                    style={{
+                      backgroundColor: dateFilter === 'custom' ? 'var(--accent-soft)' : 'var(--bg-card)',
+                      borderColor: dateFilter === 'custom' ? 'var(--accent)' : 'var(--border-main)',
+                      color: dateFilter === 'custom' ? 'var(--accent-soft-text)' : 'var(--text-main)',
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border cursor-pointer font-medium"
+                  >
+                    <Calendar className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                    <span>{label}</span>
+                  </button>
+                );
+              }}
+            />
 
             <select
               value={statusFilter}
@@ -975,13 +1020,16 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold mb-1.5">تاریخ مراجعه</label>
-                  <input
-                    type="date"
-                    required
-                    value={formState.visit_date}
-                    onChange={(e) => setFormState({ ...formState, visit_date: e.target.value })}
-                    style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
-                    className="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+                  <DatePicker
+                    calendar={persian}
+                    locale={persian_fa}
+                    value={isoToPersianDateObj(formState.visit_date)}
+                    onChange={(d) => {
+                      const iso = toIsoDateString(d as DateObject | null);
+                      if (iso) setFormState({ ...formState, visit_date: iso });
+                    }}
+                    inputClass="w-full rounded-xl border px-3 py-2 text-sm focus:outline-none bg-slate-50 border-slate-200 text-slate-900"
+                    containerClassName="w-full"
                   />
                 </div>
                 <div>
@@ -1198,7 +1246,16 @@ export default function App() {
               </button>
               <div className="mr-auto flex items-center gap-2 text-xs">
                 <span style={{ color: 'var(--text-muted)' }}>تاریخ نوبت:</span>
-                <input type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="rounded-lg border text-xs py-1 px-2" />
+                <DatePicker
+                  calendar={persian}
+                  locale={persian_fa}
+                  value={isoToPersianDateObj(bulkDate)}
+                  onChange={(d) => {
+                    const iso = toIsoDateString(d as DateObject | null);
+                    if (iso) setBulkDate(iso);
+                  }}
+                  inputClass="rounded-lg border text-xs py-1 px-2 w-28 bg-slate-50 border-slate-200 text-slate-900 text-center"
+                />
               </div>
             </div>
 

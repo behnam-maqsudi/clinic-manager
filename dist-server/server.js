@@ -160,8 +160,10 @@ app.get('/api/patients', (req, res) => {
     try {
         const q = String(req.query.q || '');
         const date = String(req.query.date || '');
+        const dateFrom = String(req.query.date_from || '');
+        const dateTo = String(req.query.date_to || '');
         const status = String(req.query.status || '');
-        const patients = db.listPatients({ q, date, status });
+        const patients = db.listPatients({ q, date, dateFrom, dateTo, status });
         res.json({ ok: true, patients });
     }
     catch (err) {
