@@ -183,6 +183,7 @@ export default function App() {
   const [detailPatient, setDetailPatient] = useState<Patient | null>(null);
   const [detailNotes, setDetailNotes] = useState('');
   const [detailAttachments, setDetailAttachments] = useState<Attachment[]>([]);
+  const [isSavingDetailNotes, setIsSavingDetailNotes] = useState(false);
 
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkTab, setBulkTab] = useState<'grid' | 'paste'>('grid');
@@ -207,6 +208,12 @@ export default function App() {
 
   const activeLabIdRef = useRef<number | null>(null);
   activeLabIdRef.current = labModalPatientId;
+  const detailPatientRef = useRef<Patient | null>(null);
+  detailPatientRef.current = detailPatient;
+  const detailSessionRef = useRef(0);
+  const detailNotesDirtyRef = useRef(false);
+  const detailOpenerRef = useRef<HTMLElement | null>(null);
+  const detailCloseBtnRef = useRef<HTMLButtonElement | null>(null);
   const roleRef = useRef<UserRole>(role);
   roleRef.current = role;
   const toastTimerRef = useRef<number | undefined>(undefined);
@@ -283,6 +290,17 @@ export default function App() {
         const payload = JSON.parse(e.data);
         if (activeLabIdRef.current === payload.patientId) {
           loadAttachments(payload.patientId);
+        }
+        if (detailPatientRef.current?.id === payload.patientId) {
+          const sessionId = detailSessionRef.current;
+          fetch(`/api/patients/${payload.patientId}/attachments`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.ok && detailSessionRef.current === sessionId) {
+                setDetailAttachments(data.attachments || []);
+              }
+            })
+            .catch(() => {});
         }
       } catch {}
     });
@@ -380,30 +398,67 @@ export default function App() {
     }
   }
 
+  function closePatientDetails() {
+    detailSessionRef.current += 1;
+    detailNotesDirtyRef.current = false;
+    setDetailPatient(null);
+    const opener = detailOpenerRef.current;
+    detailOpenerRef.current = null;
+    if (opener && typeof opener.focus === 'function') {
+      requestAnimationFrame(() => opener.focus());
+    }
+  }
+
   async function openPatientDetails(p: Patient) {
+    detailOpenerRef.current = document.activeElement as HTMLElement | null;
+    detailSessionRef.current += 1;
+    const sessionId = detailSessionRef.current;
+    detailNotesDirtyRef.current = false;
     setDetailPatient(p);
     setDetailNotes(p.notes || '');
     setDetailAttachments([]);
+    requestAnimationFrame(() => detailCloseBtnRef.current?.focus());
+
     const res = await fetch(`/api/patients/${p.id}/attachments`);
     const data = await res.json();
-    if (data.ok) {
+    if (data.ok && detailSessionRef.current === sessionId) {
       setDetailPatient(data.patient);
+      if (!detailNotesDirtyRef.current) {
+        setDetailNotes(data.patient.notes || '');
+      }
       setDetailAttachments(data.attachments || []);
     }
   }
 
   async function saveDetailNotes() {
-    if (!detailPatient) return;
-    const res = await fetch(`/api/patients/${detailPatient.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes: detailNotes, actor_role: role }),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      setDetailPatient((prev) => (prev?.id === data.patient.id ? data.patient : prev));
+    if (!detailPatient || isSavingDetailNotes) return;
+    const sessionId = detailSessionRef.current;
+    setIsSavingDetailNotes(true);
+    try {
+      const res = await fetch(`/api/patients/${detailPatient.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: detailNotes,
+          actor_role: role,
+          expected_updated_at: detailPatient.updated_at,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        notify(data.message || 'خطا در ذخیره یادداشت');
+        return;
+      }
+      if (detailSessionRef.current === sessionId) {
+        detailNotesDirtyRef.current = false;
+        setDetailPatient(data.patient);
+      }
       notify('یادداشت پرونده ذخیره شد.');
       fetchPatients();
+    } catch {
+      notify('خطا در ارتباط با سرور هنگام ذخیره یادداشت');
+    } finally {
+      setIsSavingDetailNotes(false);
     }
   }
 
@@ -822,7 +877,16 @@ export default function App() {
                             </div>
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold">{p.full_name}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openPatientDetails(p);
+                                  }}
+                                  className="font-semibold text-right hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 rounded"
+                                >
+                                  {p.full_name}
+                                </button>
                                 {p.file_number && (
                                   <span style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="px-2 py-0.5 rounded-md border text-[11px] font-bold tabular-nums">
                                     پرونده {toPersianDigits(p.file_number)}
@@ -1547,7 +1611,15 @@ export default function App() {
 
       {/* Modal 6: Patient Full Details */}
       {detailPatient && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="detail-modal-title"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') closePatientDetails();
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-main)' }} className="rounded-2xl border max-w-2xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div style={{ borderColor: 'var(--border-main)' }} className="px-6 py-4 border-b flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1556,7 +1628,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="font-bold text-base">{detailPatient.full_name}</h3>
+                    <h3 id="detail-modal-title" className="font-bold text-base">{detailPatient.full_name}</h3>
                     {detailPatient.file_number && (
                       <span style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }} className="px-2.5 py-0.5 rounded-lg border text-xs font-bold tabular-nums">
                         پرونده {toPersianDigits(detailPatient.file_number)}
@@ -1570,18 +1642,24 @@ export default function App() {
               </div>
               <div className="flex items-center gap-1.5">
                 <button
+                  disabled={isSavingDetailNotes}
                   onClick={() => {
-                    const p = detailPatient;
-                    setDetailPatient(null);
+                    const p = { ...detailPatient, notes: detailNotes };
+                    closePatientDetails();
                     openEditPatientModal(p);
                   }}
                   style={{ borderColor: 'var(--border-main)' }}
-                  className="px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1"
+                  className="px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1 disabled:opacity-50"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                   ویرایش کامل
                 </button>
-                <button aria-label="بستن جزئیات" onClick={() => setDetailPatient(null)} className="p-1.5 rounded-lg hover:bg-slate-500/10">
+                <button
+                  ref={detailCloseBtnRef}
+                  aria-label="بستن جزئیات"
+                  onClick={closePatientDetails}
+                  className="p-1.5 rounded-lg hover:bg-slate-500/10"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -1637,7 +1715,10 @@ export default function App() {
                 <textarea
                   rows={4}
                   value={detailNotes}
-                  onChange={(e) => setDetailNotes(e.target.value)}
+                  onChange={(e) => {
+                    detailNotesDirtyRef.current = true;
+                    setDetailNotes(e.target.value);
+                  }}
                   style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border-main)' }}
                   className="w-full rounded-xl border p-3 text-sm leading-6 focus:outline-none"
                   placeholder="یادداشتی ثبت نشده است..."
@@ -1648,7 +1729,10 @@ export default function App() {
                       <button
                         key={chip}
                         type="button"
-                        onClick={() => setDetailNotes((n) => (n.trim() ? `${n.trim()} • ${chip}` : chip))}
+                        onClick={() => {
+                          detailNotesDirtyRef.current = true;
+                          setDetailNotes((n) => (n.trim() ? `${n.trim()} • ${chip}` : chip));
+                        }}
                         style={{ backgroundColor: 'var(--bg-subtle)' }}
                         className="px-2.5 py-1 rounded-full text-[11px] hover:opacity-80"
                       >
@@ -1657,11 +1741,12 @@ export default function App() {
                     ))}
                   </div>
                   <button
+                    disabled={isSavingDetailNotes}
                     onClick={saveDetailNotes}
                     style={{ backgroundColor: 'var(--accent)' }}
-                    className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
+                    className="px-4 py-2 rounded-xl text-white text-xs font-semibold disabled:opacity-50"
                   >
-                    ذخیره یادداشت
+                    {isSavingDetailNotes ? 'در حال ذخیره...' : 'ذخیره یادداشت'}
                   </button>
                 </div>
               </div>
@@ -1673,7 +1758,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       const id = detailPatient.id;
-                      setDetailPatient(null);
+                      closePatientDetails();
                       openLabModal(id);
                     }}
                     style={{ color: 'var(--accent)' }}

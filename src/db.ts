@@ -181,6 +181,12 @@ export function updatePatient(id: number | string, payload: Partial<PatientInput
     return null;
   }
 
+  if (payload.expected_updated_at && existing.updated_at !== payload.expected_updated_at) {
+    const err = new Error('اطلاعات این پرونده هم‌زمان تغییر کرده است. لطفاً پنجره را ببندید و دوباره باز کنید.');
+    (err as Error & { statusCode?: number }).statusCode = 409;
+    throw err;
+  }
+
   const fullName = payload.full_name !== undefined ? String(payload.full_name).trim() : existing.full_name;
   if (!fullName) {
     throw new Error('نام و نام خانوادگی مراجعه‌کننده نمی‌تواند خالی باشد.');

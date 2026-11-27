@@ -71,24 +71,25 @@ function broadcastEvent(event, data = {}) {
 function getLanIps() {
     const interfaces = node_os_1.default.networkInterfaces();
     const preferred = [];
-    const fallback = [];
-    const virtualPattern = /(vethernet|wsl|docker|vmware|virtualbox|vbox|hyper-v|loopback|tailscale|zerotier)/i;
+    const secondary = [];
+    const internalVirtualPattern = /(wsl|docker|vmware|virtualbox|vbox|loopback|default switch|internal|nat)/i;
     for (const name of Object.keys(interfaces)) {
-        const isVirtual = virtualPattern.test(name);
+        const isInternalVirtual = internalVirtualPattern.test(name);
+        const isExternalVirtual = /vethernet.*external/i.test(name);
         for (const iface of interfaces[name] || []) {
             if (iface.family !== 'IPv4' || iface.internal)
                 continue;
             if (iface.address.startsWith('169.254.'))
                 continue;
-            if (!isVirtual && (iface.address.startsWith('192.168.') || iface.address.startsWith('10.'))) {
+            if ((!isInternalVirtual || isExternalVirtual) && (iface.address.startsWith('192.168.') || iface.address.startsWith('10.'))) {
                 preferred.push(iface.address);
             }
-            else if (!isVirtual) {
-                fallback.push(iface.address);
+            else if (!isInternalVirtual || isExternalVirtual) {
+                secondary.push(iface.address);
             }
         }
     }
-    return preferred.length > 0 ? preferred : fallback;
+    return preferred.length > 0 ? preferred : secondary;
 }
 function getPrimaryBaseUrl(req) {
     const ips = getLanIps();
@@ -190,7 +191,8 @@ app.post('/api/patients/bulk', (req, res) => {
         return res.status(201).json({ ok: true, count: createdIds.length });
     }
     catch (err) {
-        return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+        const statusCode = err.statusCode || 400;
+        return res.status(statusCode).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
     }
 });
 app.get('/api/patients/:id', (req, res) => {
@@ -231,7 +233,8 @@ app.put('/api/patients/:id', (req, res) => {
         return res.json({ ok: true, patient });
     }
     catch (err) {
-        return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+        const statusCode = err.statusCode || 400;
+        return res.status(statusCode).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
     }
 });
 app.delete('/api/patients/:id', (req, res) => {
