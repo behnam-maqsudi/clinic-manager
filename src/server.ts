@@ -110,6 +110,14 @@ const upload = multer({
   },
 });
 
+const backupUpload = multer({
+  dest: path.join(os.tmpdir(), 'clinic-backup-uploads'),
+  limits: {
+    fileSize: 100 * 1024 * 1024,
+    files: 1,
+  },
+});
+
 // --- SSE Endpoint ---
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -550,11 +558,20 @@ app.get('/api/patients/:id/qr', async (req, res) => {
   }
 });
 
-// --- Backup ---
+// --- Backup & Restore / Import ---
 app.post('/api/backup/create', (_req, res) => {
   try {
     const file = db.createBackup();
     res.json({ ok: true, file: path.basename(file), message: 'نسخه پشتیبان با موفقیت ذخیره شد.' });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get('/api/backup/list', (_req, res) => {
+  try {
+    const backups = db.listBackups();
+    res.json({ ok: true, backups });
   } catch (err) {
     res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
   }
@@ -567,6 +584,125 @@ app.get('/api/backup/download', (_req, res) => {
     res.download(dbPath, `clinic-jahanian-backup-${stamp}.db`);
   } catch (err) {
     res.status(500).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/backup/restore', (req, res) => {
+  backupUpload.single('file')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ ok: false, message: `خطا در آپلود فایل بکاپ: ${err.message}` });
+    }
+    const uploaded = req.file;
+    if (!uploaded) {
+      return res.status(400).json({ ok: false, message: 'هیچ فایل بکاپی انتخاب نشده است.' });
+    }
+    try {
+      const result = db.restoreDatabaseFromFile(uploaded.path);
+      broadcastEvent('patients_changed', { action: 'restore' });
+      broadcastEvent('setup_changed', db.getSetupState() as unknown as Record<string, unknown>);
+      return res.json({
+        ok: true,
+        patientCount: result.patientCount,
+        message: `دیتابیس با موفقیت بازیابی شد (${result.patientCount} پرونده بیمار).`,
+      });
+    } catch (restoreErr) {
+      return res.status(400).json({
+        ok: false,
+        message: restoreErr instanceof Error ? restoreErr.message : String(restoreErr),
+      });
+    } finally {
+      if (fs.existsSync(uploaded.path)) {
+        fs.unlinkSync(uploaded.path);
+      }
+    }
+  });
+});
+
+app.post('/api/backup/restore-server', (req, res) => {
+  try {
+    const fileName = String(req.body?.fileName || '').trim();
+    const backupPath = db.getBackupFilePath(fileName);
+    if (!backupPath) {
+      return res.status(404).json({ ok: false, message: 'فایل بکاپ روی سرور یافت نشد.' });
+    }
+    const result = db.restoreDatabaseFromFile(backupPath);
+    broadcastEvent('patients_changed', { action: 'restore' });
+    broadcastEvent('setup_changed', db.getSetupState() as unknown as Record<string, unknown>);
+    return res.json({
+      ok: true,
+      patientCount: result.patientCount,
+      message: `بکاپ با موفقیت بازیابی شد (${result.patientCount} پرونده بیمار).`,
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+function normalizeExternalDownloadUrl(rawUrl: string): string {
+  const clean = rawUrl.trim();
+  // Convert Google Drive share URL: https://drive.google.com/file/d/<ID>/view...
+  const gdriveMatch = clean.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (gdriveMatch?.[1]) {
+    return `https://drive.google.com/uc?export=download&id=${gdriveMatch[1]}`;
+  }
+  const gdriveOpenMatch = clean.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (gdriveOpenMatch?.[1]) {
+    return `https://drive.google.com/uc?export=download&id=${gdriveOpenMatch[1]}`;
+  }
+  return clean;
+}
+
+app.post('/api/backup/import-url', async (req, res) => {
+  const rawUrl = String(req.body?.url || '').trim();
+  if (!rawUrl) {
+    return res.status(400).json({ ok: false, message: 'لینک فایل بکاپ را وارد کنید.' });
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(normalizeExternalDownloadUrl(rawUrl));
+  } catch {
+    return res.status(400).json({ ok: false, message: 'لینک واردشده معتبر نیست.' });
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return res.status(400).json({ ok: false, message: 'فقط لینک‌های http/https پشتیبانی می‌شوند.' });
+  }
+
+  const tempDir = path.join(os.tmpdir(), 'clinic-backup-uploads');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const tempFile = path.join(tempDir, `import-${Date.now()}.db`);
+
+  try {
+    const resp = await fetch(parsed.toString(), { signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) {
+      return res.status(502).json({ ok: false, message: `خطا در دریافت فایل از لینک (HTTP ${resp.status}).` });
+    }
+    const contentType = resp.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      return res.status(400).json({
+        ok: false,
+        message: 'لینک Google Drive یا سرور مقصد خصوصی است یا صفحه وب برگرداند. لطفاً دسترسی لینک را عمومی کنید یا فایل را دانلود و از گزینه انتخاب فایل ایمپورت کنید.',
+      });
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    fs.writeFileSync(tempFile, buf);
+
+    const result = db.restoreDatabaseFromFile(tempFile);
+    broadcastEvent('patients_changed', { action: 'restore' });
+    broadcastEvent('setup_changed', db.getSetupState() as unknown as Record<string, unknown>);
+    return res.json({
+      ok: true,
+      patientCount: result.patientCount,
+      message: `دیتابیس از لینک با موفقیت ایمپورت شد (${result.patientCount} پرونده بیمار).`,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      ok: false,
+      message: err instanceof Error ? err.message : 'خطا در ایمپورت دیتابیس از لینک',
+    });
+  } finally {
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
   }
 });
 

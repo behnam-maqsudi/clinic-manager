@@ -168,12 +168,30 @@ test.describe('Clinic Manager — Core UI & Logic E2E', () => {
     await expect(page.getByText('بیمار آماده ورود است').last()).toBeVisible();
     await page.getByRole('button', { name: 'بستن پیام‌ها' }).click();
 
-    // 6.6. LAN Discovery in Settings (Network tab) + incoming connection invite banner via SSE
+    // 6.6. LAN Discovery & Backup/Import tab in Settings + incoming connection invite banner via SSE
     await page.getByRole('button', { name: 'تنظیمات' }).click();
     await page.getByRole('button', { name: 'شبکه و اتصال' }).click();
     await page.getByRole('button', { name: 'جستجو در شبکه' }).click();
     await expect(page.getByRole('button', { name: 'جستجو در شبکه' })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: 'بکاپ و دیتابیس' }).click();
+    await expect(page.getByText('ایمپورت و بازیابی دیتابیس')).toBeVisible();
+    await expect(page.getByPlaceholder('https://drive.google.com/file/d/.../view')).toBeVisible();
+    await page.getByRole('button', { name: 'ذخیره بکاپ در سرور' }).click();
+    await expect(page.getByText('نسخه پشتیبان با موفقیت ذخیره شد.')).toBeVisible();
     await page.locator('.fixed').getByRole('button').first().click();
+
+    // Verify invalid backup file upload is rejected cleanly with 400
+    const badRestoreRes = await page.request.post('/api/backup/restore', {
+      multipart: {
+        file: {
+          name: 'not-a-db.db',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from('invalid content'),
+        },
+      },
+    });
+    expect(badRestoreRes.status()).toBe(400);
 
     // Simulate incoming connection invite from another PC on the LAN
     const inviteRes = await page.request.post('/api/network/invite', {

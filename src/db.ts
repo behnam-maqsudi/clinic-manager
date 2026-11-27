@@ -27,68 +27,76 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-const db = new DatabaseSync(DB_PATH);
+function initSchema(database: DatabaseSync) {
+  database.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
 
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS patients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_number TEXT NOT NULL DEFAULT '',
+      full_name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      national_id TEXT NOT NULL DEFAULT '',
+      visit_date TEXT NOT NULL,
+      visit_time TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'in_progress', 'visited', 'cancelled')),
+      notes TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL DEFAULT 'secretary' CHECK (created_by IN ('secretary', 'doctor')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
 
-  CREATE TABLE IF NOT EXISTS patients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_number TEXT NOT NULL DEFAULT '',
-    full_name TEXT NOT NULL,
-    phone TEXT NOT NULL DEFAULT '',
-    national_id TEXT NOT NULL DEFAULT '',
-    visit_date TEXT NOT NULL,
-    visit_time TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'in_progress', 'visited', 'cancelled')),
-    notes TEXT NOT NULL DEFAULT '',
-    created_by TEXT NOT NULL DEFAULT 'secretary' CHECK (created_by IN ('secretary', 'doctor')),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
+    CREATE TABLE IF NOT EXISTS attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      patient_id INTEGER NOT NULL,
+      original_name TEXT NOT NULL,
+      stored_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      title TEXT NOT NULL DEFAULT '',
+      uploaded_by TEXT NOT NULL DEFAULT 'secretary',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+    );
 
-  CREATE TABLE IF NOT EXISTS attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    patient_id INTEGER NOT NULL,
-    original_name TEXT NOT NULL,
-    stored_name TEXT NOT NULL,
-    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-    size_bytes INTEGER NOT NULL DEFAULT 0,
-    title TEXT NOT NULL DEFAULT '',
-    uploaded_by TEXT NOT NULL DEFAULT 'secretary',
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
-  );
+    CREATE INDEX IF NOT EXISTS idx_patients_visit_date ON patients(visit_date);
+    CREATE INDEX IF NOT EXISTS idx_patients_status ON patients(status);
+    CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
 
-  CREATE INDEX IF NOT EXISTS idx_patients_visit_date ON patients(visit_date);
-  CREATE INDEX IF NOT EXISTS idx_patients_status ON patients(status);
-  CREATE INDEX IF NOT EXISTS idx_attachments_patient_id ON attachments(patient_id);
+    CREATE TABLE IF NOT EXISTS clinic_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_role TEXT NOT NULL CHECK (sender_role IN ('secretary', 'doctor', 'system')),
+      recipient_role TEXT NOT NULL DEFAULT 'all' CHECK (recipient_role IN ('secretary', 'doctor', 'all')),
+      body TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'connection_invite')),
+      meta_json TEXT NOT NULL DEFAULT '{}',
+      read_at TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
 
-  CREATE TABLE IF NOT EXISTS clinic_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_role TEXT NOT NULL CHECK (sender_role IN ('secretary', 'doctor', 'system')),
-    recipient_role TEXT NOT NULL DEFAULT 'all' CHECK (recipient_role IN ('secretary', 'doctor', 'all')),
-    body TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'connection_invite')),
-    meta_json TEXT NOT NULL DEFAULT '{}',
-    read_at TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
-  );
+    CREATE INDEX IF NOT EXISTS idx_clinic_messages_created_at ON clinic_messages(created_at);
 
-  CREATE INDEX IF NOT EXISTS idx_clinic_messages_created_at ON clinic_messages(created_at);
+    CREATE TABLE IF NOT EXISTS clinic_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
 
-  CREATE TABLE IF NOT EXISTS clinic_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
-
-const columns = db.prepare('PRAGMA table_info(patients)').all() as Array<{ name: string }>;
-if (!columns.some((col) => col.name === 'file_number')) {
-  db.exec("ALTER TABLE patients ADD COLUMN file_number TEXT NOT NULL DEFAULT '';");
+  const columns = database.prepare('PRAGMA table_info(patients)').all() as Array<{ name: string }>;
+  if (!columns.some((col) => col.name === 'file_number')) {
+    database.exec("ALTER TABLE patients ADD COLUMN file_number TEXT NOT NULL DEFAULT '';");
+  }
+  database.exec('CREATE INDEX IF NOT EXISTS idx_patients_file_number ON patients(file_number);');
 }
-db.exec('CREATE INDEX IF NOT EXISTS idx_patients_file_number ON patients(file_number);');
+
+function openDatabase(): DatabaseSync {
+  const database = new DatabaseSync(DB_PATH);
+  initSchema(database);
+  return database;
+}
+
+let db = openDatabase();
 
 export function normalizeDigits(value: unknown): string {
   if (!value) return '';
@@ -390,6 +398,78 @@ export function createBackup(): string {
 export function getDbPath(): string {
   db.exec('PRAGMA wal_checkpoint(PASSIVE);');
   return DB_PATH;
+}
+
+export function listBackups(): Array<{ name: string; sizeBytes: number; createdAt: string }> {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+  return fs
+    .readdirSync(BACKUP_DIR)
+    .filter((f) => f.startsWith('clinic-') && f.endsWith('.db'))
+    .sort()
+    .reverse()
+    .map((name) => {
+      const stat = fs.statSync(path.join(BACKUP_DIR, name));
+      return {
+        name,
+        sizeBytes: stat.size,
+        createdAt: stat.mtime.toISOString(),
+      };
+    });
+}
+
+export function restoreDatabaseFromFile(sourcePath: string): { patientCount: number } {
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error('فایل بکاپ پیدا نشد.');
+  }
+  const header = Buffer.alloc(16);
+  const fd = fs.openSync(sourcePath, 'r');
+  try {
+    fs.readSync(fd, header, 0, 16, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (!header.toString('utf8').startsWith('SQLite format 3')) {
+    throw new Error('فایل انتخاب‌شده یک دیتابیس معتبر SQLite نیست.');
+  }
+
+  // Validate schema before replacing live DB
+  const probe = new DatabaseSync(sourcePath, { readOnly: true });
+  let patientCount = 0;
+  try {
+    const tbl = probe
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='patients'")
+      .get() as { name?: string } | undefined;
+    if (!tbl?.name) {
+      throw new Error('این فایل متعلق به سامانه مطب نیست (جدول بیماران یافت نشد).');
+    }
+    const countRow = probe.prepare('SELECT COUNT(*) AS cnt FROM patients').get() as { cnt: number };
+    patientCount = Number(countRow?.cnt || 0);
+  } finally {
+    probe.close();
+  }
+
+  // Save safety backup of current DB first
+  createBackup();
+
+  db.close();
+  try {
+    for (const suffix of ['-wal', '-shm']) {
+      const walPath = `${DB_PATH}${suffix}`;
+      if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+    }
+    fs.copyFileSync(sourcePath, DB_PATH);
+  } finally {
+    db = openDatabase();
+  }
+
+  return { patientCount };
+}
+
+export function getBackupFilePath(fileName: string): string | null {
+  const safe = path.basename(fileName);
+  if (!safe.startsWith('clinic-') || !safe.endsWith('.db')) return null;
+  const full = path.join(BACKUP_DIR, safe);
+  return fs.existsSync(full) ? full : null;
 }
 
 interface RawMessageRow {
